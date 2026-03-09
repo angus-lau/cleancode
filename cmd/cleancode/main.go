@@ -5,21 +5,26 @@ import (
 	"os"
 	"path/filepath"
 
+	"time"
+
 	"github.com/angus/cleancode/internal/agents"
+	"github.com/angus/cleancode/internal/config"
 	"github.com/angus/cleancode/internal/context"
 	"github.com/angus/cleancode/internal/query"
+	"github.com/angus/cleancode/internal/schema"
+	"github.com/angus/cleancode/internal/watcher"
 	"github.com/spf13/cobra"
 )
 
 // ANSI colors
 const (
-	reset   = "\033[0m"
-	red     = "\033[31m"
-	green   = "\033[32m"
-	yellow  = "\033[33m"
-	blue    = "\033[34m"
-	cyan    = "\033[36m"
-	gray    = "\033[90m"
+	reset  = "\033[0m"
+	red    = "\033[31m"
+	green  = "\033[32m"
+	yellow = "\033[33m"
+	blue   = "\033[34m"
+	cyan   = "\033[36m"
+	gray   = "\033[90m"
 )
 
 var rootFlag string
@@ -29,11 +34,50 @@ var rootCmd = &cobra.Command{
 	Short: "AI-powered code review with deep codebase understanding",
 }
 
+var initCmd = &cobra.Command{
+	Use:   "init",
+	Short: "Initialize cleancode in a project",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		root, _ := filepath.Abs(rootFlag)
+		configPath := filepath.Join(root, ".cleancode.json")
+
+		if _, err := os.Stat(configPath); err == nil {
+			fmt.Printf("%s.cleancode.json already exists%s\n", yellow, reset)
+			return nil
+		}
+
+		cfg := config.DefaultConfig()
+
+		dbURL, _ := cmd.Flags().GetString("db")
+		if dbURL != "" {
+			cfg.Schema = &config.SchemaConfig{
+				Provider: "postgres",
+				URL:      dbURL,
+			}
+		}
+
+		if err := config.Save(root, cfg); err != nil {
+			return err
+		}
+
+		fmt.Printf("%sCreated .cleancode.json%s\n", green, reset)
+		fmt.Println("  Edit it to configure agents, schema, and ignore patterns.")
+		if cfg.Schema != nil {
+			fmt.Println("  Schema fetching enabled — run 'cleancode index' to fetch.")
+		} else {
+			fmt.Println("  To enable schema fetching, add a \"schema\" block with your DB URL.")
+		}
+		return nil
+	},
+}
+
 var indexCmd = &cobra.Command{
 	Use:   "index",
 	Short: "Index the codebase",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		root, _ := filepath.Abs(rootFlag)
+		cfg, _ := config.Load(root)
+
 		fmt.Printf("%sIndexing%s %s ...\n", blue, reset, root)
 
 		engine, err := query.NewEngine(root)
@@ -52,6 +96,22 @@ var indexCmd = &cobra.Command{
 		fmt.Printf("  Symbols: %d\n", result.Symbols)
 		fmt.Printf("  Edges:   %d\n", result.Edges)
 		fmt.Printf("  Time:    %s\n", result.Elapsed)
+
+		// Fetch DB schema if configured
+		if cfg.Schema != nil && cfg.Schema.URL != "" {
+			fmt.Printf("%sFetching database schema%s ...\n", blue, reset)
+			dbSchema, err := schema.Fetch(cfg.Schema.URL)
+			if err != nil {
+				fmt.Printf("  %sWarning: could not fetch schema: %v%s\n", yellow, err, reset)
+			} else {
+				if err := schema.SaveToStore(engine.StoreDB(), dbSchema); err != nil {
+					fmt.Printf("  %sWarning: could not save schema: %v%s\n", yellow, err, reset)
+				} else {
+					fmt.Printf("  Tables:  %d\n", len(dbSchema.Tables))
+				}
+			}
+		}
+
 		return nil
 	},
 }
@@ -61,7 +121,12 @@ var reviewCmd = &cobra.Command{
 	Short: "Run parallel review agents on current changes",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		root, _ := filepath.Abs(rootFlag)
+		cfg, _ := config.Load(root)
+
 		baseBranch, _ := cmd.Flags().GetString("base")
+		if baseBranch == "" {
+			baseBranch = cfg.BaseBranch
+		}
 
 		fmt.Printf("%sAssembling context%s ...\n", blue, reset)
 		assembler := context.NewAssembler(root)
@@ -92,27 +157,52 @@ var reviewCmd = &cobra.Command{
 				fmt.Printf("  Symbols with callers: %d\n", len(callers))
 				fmt.Printf("  Files with dependents: %d\n", len(dependents))
 			}
+
+			// Load schema and find referenced tables
+			dbSchema, err := schema.LoadFromStore(engine.StoreDB())
+			if err == nil && dbSchema != nil {
+				referenced := dbSchema.FindReferencedTables(ctx.Diff)
+				if len(referenced) > 0 {
+					var schemaStr string
+					for _, t := range referenced {
+						schemaStr += schema.FormatTable(&t) + "\n"
+					}
+					ctx.SchemaContext = schemaStr
+					fmt.Printf("  Referenced tables: %d\n", len(referenced))
+				}
+			}
+
 			engine.Close()
 		}
 
 		formatted := context.FormatForAgent(ctx)
 
+		// Build agent list from config
+		var enabledAgents []agents.AgentConfig
+		for _, preset := range agents.PresetAgents {
+			enabled, exists := cfg.Agents[preset.Name]
+			if exists {
+				if enabled {
+					enabledAgents = append(enabledAgents, preset)
+				}
+			} else if preset.Enabled {
+				enabledAgents = append(enabledAgents, preset)
+			}
+		}
+
 		fmt.Printf("%sRunning review agents%s ...\n\n", blue, reset)
-		orch := agents.NewOrchestrator(nil)
+		orch := agents.NewOrchestrator(enabledAgents)
 		results := orch.Review(formatted)
 
 		totalFindings := 0
-		for _, result := range results {
-			count := len(result.Findings)
-			totalFindings += count
+		synthesized := len(results) == 1 && results[0].Agent == "synthesizer"
 
-			if count == 0 {
-				fmt.Printf("%s✓ %s%s %s(%dms)%s\n", green, result.Agent, reset, gray, result.Elapsed, reset)
-			} else {
-				fmt.Printf("%s● %s%s %s— %d finding(s) (%dms)%s\n", yellow, result.Agent, reset, gray, count, result.Elapsed, reset)
-			}
+		if synthesized {
+			r := results[0]
+			totalFindings = len(r.Findings)
+			fmt.Printf("%s● synthesized%s %s— %d finding(s) (%dms)%s\n", blue, reset, gray, totalFindings, r.Elapsed, reset)
 
-			for _, f := range result.Findings {
+			for _, f := range r.Findings {
 				var sevStr string
 				switch f.Severity {
 				case agents.Critical:
@@ -128,17 +218,54 @@ var reviewCmd = &cobra.Command{
 					loc = fmt.Sprintf("%s:%d", f.File, f.Line)
 				}
 
-				fmt.Printf("  %s %s%s%s\n", sevStr, cyan, loc, reset)
+				fmt.Printf("  %s %s%s%s %s[%s]%s\n", sevStr, cyan, loc, reset, gray, f.Agent, reset)
 				fmt.Printf("    %s\n", f.Message)
 				if f.Suggestion != "" {
 					fmt.Printf("    %s→ %s%s\n", gray, f.Suggestion, reset)
 				}
 				fmt.Println()
 			}
+		} else {
+			for _, result := range results {
+				count := len(result.Findings)
+				totalFindings += count
+
+				if count == 0 {
+					fmt.Printf("%s✓ %s%s %s(%dms)%s\n", green, result.Agent, reset, gray, result.Elapsed, reset)
+				} else {
+					fmt.Printf("%s● %s%s %s— %d finding(s) (%dms)%s\n", yellow, result.Agent, reset, gray, count, result.Elapsed, reset)
+				}
+
+				for _, f := range result.Findings {
+					var sevStr string
+					switch f.Severity {
+					case agents.Critical:
+						sevStr = red + "CRITICAL" + reset
+					case agents.Warning:
+						sevStr = yellow + "WARNING" + reset
+					default:
+						sevStr = gray + "INFO" + reset
+					}
+
+					loc := f.File
+					if f.Line > 0 {
+						loc = fmt.Sprintf("%s:%d", f.File, f.Line)
+					}
+
+					fmt.Printf("  %s %s%s%s\n", sevStr, cyan, loc, reset)
+					fmt.Printf("    %s\n", f.Message)
+					if f.Suggestion != "" {
+						fmt.Printf("    %s→ %s%s\n", gray, f.Suggestion, reset)
+					}
+					fmt.Println()
+				}
+			}
 		}
 
 		if totalFindings == 0 {
 			fmt.Printf("\n%sAll clear! No issues found.%s\n", green, reset)
+		} else if synthesized {
+			fmt.Printf("\n%s%d finding(s), deduplicated and prioritized.%s\n", yellow, totalFindings, reset)
 		} else {
 			fmt.Printf("\n%s%d finding(s) across %d agents.%s\n", yellow, totalFindings, len(results), reset)
 		}
@@ -268,11 +395,51 @@ var hookCmd = &cobra.Command{
 	},
 }
 
+var watchCmd = &cobra.Command{
+	Use:   "watch",
+	Short: "Watch for file changes and re-index automatically",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		root, _ := filepath.Abs(rootFlag)
+
+		fmt.Printf("%sStarting watch mode%s for %s\n", blue, reset, root)
+
+		// Initial index
+		engine, err := query.NewEngine(root)
+		if err != nil {
+			return err
+		}
+
+		result, err := engine.Index()
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%sInitial index:%s %d files, %d symbols, %d edges (%s)\n",
+			green, reset, result.Files, result.Symbols, result.Edges, result.Elapsed)
+
+		w, err := watcher.New(root, engine)
+		if err != nil {
+			engine.Close()
+			return err
+		}
+		defer func() {
+			w.Close()
+			engine.Close()
+		}()
+
+		fmt.Printf("%sWatching for changes%s (Ctrl+C to stop)\n", blue, reset)
+		return w.Watch(func(files, symbols, edges int, elapsed time.Duration) {
+			fmt.Printf("  %sRe-indexed:%s %d files, %d symbols, %d edges (%s)\n",
+				green, reset, files, symbols, edges, elapsed)
+		})
+	},
+}
+
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&rootFlag, "root", "r", ".", "Project root directory")
-	reviewCmd.Flags().StringP("base", "b", "main", "Base branch to diff against")
+	reviewCmd.Flags().StringP("base", "b", "", "Base branch to diff against (default from config)")
+	initCmd.Flags().String("db", "", "Database connection string for schema fetching")
 
-	rootCmd.AddCommand(indexCmd, reviewCmd, searchCmd, callersCmd, statsCmd, hookCmd)
+	rootCmd.AddCommand(initCmd, indexCmd, reviewCmd, searchCmd, callersCmd, statsCmd, hookCmd, watchCmd)
 }
 
 func main() {

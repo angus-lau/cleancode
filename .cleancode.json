@@ -1,0 +1,14 @@
+{
+  "baseBranch": "main",
+  "agents": {
+    "api-contract": true,
+    "correctness": true,
+    "performance": true,
+    "security": false
+  },
+  "ignore": [
+    "**/*.test.ts",
+    "**/*.spec.ts",
+    "**/fixtures/**"
+  ]
+}

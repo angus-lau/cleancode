@@ -129,6 +129,31 @@ func (s *Store) SaveFile(file *indexer.FileNode) error {
 	return tx.Commit()
 }
 
+// SaveResolvedPaths updates the resolved_path column for all imports after graph resolution.
+func (s *Store) SaveResolvedPaths(files map[string]*indexer.FileNode) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare("UPDATE imports SET resolved_path = ? WHERE file_path = ? AND source = ?")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, file := range files {
+		for _, imp := range file.Imports {
+			if imp.ResolvedPath != "" {
+				stmt.Exec(imp.ResolvedPath, file.Path, imp.Source)
+			}
+		}
+	}
+
+	return tx.Commit()
+}
+
 func (s *Store) SaveEdges(edges []indexer.Edge) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -285,6 +310,11 @@ func (s *Store) Stats() (indexer.IndexStats, error) {
 	s.db.QueryRow("SELECT COUNT(*) FROM symbols").Scan(&stats.Symbols)
 	s.db.QueryRow("SELECT COUNT(*) FROM edges").Scan(&stats.Edges)
 	return stats, nil
+}
+
+// DB returns the underlying database handle for use by other packages.
+func (s *Store) DB() *sql.DB {
+	return s.db
 }
 
 func (s *Store) Close() error {

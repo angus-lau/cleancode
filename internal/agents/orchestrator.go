@@ -39,6 +39,24 @@ func (o *Orchestrator) Review(formattedContext string) []ReviewResult {
 	}
 
 	wg.Wait()
+
+	// Pass 2: Synthesize if there are findings from multiple agents
+	totalFindings := 0
+	agentsWithFindings := 0
+	for _, r := range results {
+		if len(r.Findings) > 0 {
+			totalFindings += len(r.Findings)
+			agentsWithFindings++
+		}
+	}
+
+	if agentsWithFindings >= 2 && totalFindings >= 2 {
+		synthesized := o.synthesize(results)
+		if synthesized != nil {
+			return []ReviewResult{*synthesized}
+		}
+	}
+
 	return results
 }
 
@@ -133,6 +151,60 @@ func parseFindings(text, agentName string) []Finding {
 		})
 	}
 	return findings
+}
+
+func (o *Orchestrator) synthesize(results []ReviewResult) *ReviewResult {
+	start := time.Now()
+
+	// Collect all findings into JSON for the synthesizer
+	var allFindings []Finding
+	for _, r := range results {
+		allFindings = append(allFindings, r.Findings...)
+	}
+
+	findingsJSON, err := json.Marshal(allFindings)
+	if err != nil {
+		return nil
+	}
+
+	prompt := fmt.Sprintf(`You are a code review synthesizer. Multiple review agents have analyzed the same code changes and produced findings independently. Your job is to produce a single, clean, prioritized list.
+
+Here are all the findings from the agents:
+%s
+
+Instructions:
+1. DEDUPLICATE: If multiple agents flagged the same issue (same file, same concern), keep only the best-written one.
+2. RESOLVE CONFLICTS: If agents disagree (e.g., one says "cache this" and another says "don't cache"), pick the right answer and explain why.
+3. PRIORITIZE: Order by actual impact — critical bugs first, then warnings, then info.
+4. PRESERVE: Keep the original agent attribution in the "agent" field so the developer knows which perspective it came from.
+
+Return a JSON array of findings. Each finding must have:
+- "agent": original agent name that found it (or "synthesizer" if you resolved a conflict)
+- "severity": "critical" | "warning" | "info"
+- "file": the file path
+- "line": line number (0 if unknown)
+- "message": clear description
+- "suggestion": how to fix it (optional)
+
+IMPORTANT: Return ONLY the JSON array, no other text.`, string(findingsJSON))
+
+	cmd := exec.Command("claude", "-p", prompt)
+	cmd.Env = append(os.Environ(), "CLAUDECODE=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil // Fail gracefully — return unsynthesized results
+	}
+
+	findings := parseFindings(string(output), "synthesizer")
+	if len(findings) == 0 {
+		return nil
+	}
+
+	return &ReviewResult{
+		Agent:    "synthesizer",
+		Findings: findings,
+		Elapsed:  time.Since(start).Milliseconds(),
+	}
 }
 
 func errorResult(agentName string, start time.Time, err error) ReviewResult {

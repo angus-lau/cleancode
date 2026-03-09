@@ -8,15 +8,8 @@ import (
 // names are actually referenced inside the symbol's body. This gives us
 // precise call-site edges instead of "every symbol uses every import."
 func resolveReferences(root *sitter.Node, source []byte, symbols []Symbol, importedNames map[string]bool) {
-	// Build a map of symbols by their start/end lines for quick lookup
 	for i := range symbols {
 		sym := &symbols[i]
-
-		// Only resolve for functions, methods, and variables (arrow functions)
-		// Classes/interfaces/types don't "call" things in the same way
-		if sym.Kind != Function && sym.Kind != Method && sym.Kind != Variable {
-			continue
-		}
 
 		// Find the AST node that corresponds to this symbol's range
 		node := findNodeAtRange(root, sym.StartLine-1, sym.EndLine-1) // tree-sitter is 0-indexed

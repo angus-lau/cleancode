@@ -39,11 +39,15 @@ func (g *DependencyGraph) BuildEdges() {
 	g.importerIndex = make(map[string]map[string]bool)
 
 	for filePath, file := range g.files {
-		for _, imp := range file.Imports {
+		for i := range file.Imports {
+			imp := &file.Imports[i]
 			resolved := resolveImport(imp.Source, filePath)
 			if resolved == "" {
 				continue
 			}
+
+			// Persist the resolved path back onto the ImportRef
+			imp.ResolvedPath = resolved
 
 			// Track file-level import relationship
 			if g.importerIndex[resolved] == nil {
@@ -67,7 +71,6 @@ func (g *DependencyGraph) BuildEdges() {
 				localID := fmt.Sprintf("%s:%s:%d", filePath, localSym.Name, localSym.StartLine)
 
 				if len(localSym.References) > 0 {
-					// Precise mode: only create edges for actual references
 					for _, ref := range localSym.References {
 						if targetID, ok := specToTarget[ref]; ok {
 							g.edges = append(g.edges, indexer.Edge{
@@ -77,17 +80,8 @@ func (g *DependencyGraph) BuildEdges() {
 							})
 						}
 					}
-				} else if localSym.Kind == indexer.Class || localSym.Kind == indexer.Interface || localSym.Kind == indexer.TypeAlias {
-					// Fallback only for classes/interfaces/types (their bodies aren't walked):
-					// link to all imports from this file
-					for _, targetID := range specToTarget {
-						g.edges = append(g.edges, indexer.Edge{
-							From: localID,
-							To:   targetID,
-							Type: "imports",
-						})
-					}
 				}
+				// No fallback — all symbol kinds now have References populated via AST walking
 			}
 		}
 	}
@@ -199,6 +193,11 @@ func (g *DependencyGraph) AllSymbols() []indexer.Symbol {
 
 func (g *DependencyGraph) Edges() []indexer.Edge {
 	return g.edges
+}
+
+// Files returns the internal file map (used to persist resolved import paths).
+func (g *DependencyGraph) Files() map[string]*indexer.FileNode {
+	return g.files
 }
 
 func (g *DependencyGraph) Stats() indexer.IndexStats {

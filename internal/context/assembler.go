@@ -21,6 +21,7 @@ type ReviewContext struct {
 	ChangedSymbols []string
 	Callers        map[string][]string
 	Dependents     map[string][]string
+	SchemaContext  string // formatted DB schema for referenced tables
 }
 
 type Assembler struct {
@@ -128,6 +129,15 @@ func FormatForAgent(ctx *ReviewContext) string {
 				}
 				section += line
 			}
+		}
+		b.WriteString(section)
+	}
+
+	// Database schema
+	if ctx.SchemaContext != "" && budget > 500 {
+		section = "\n## Database Schema (referenced tables)\n" + ctx.SchemaContext
+		if len(section) > budget {
+			section = section[:budget-20] + "\n... (truncated)\n"
 		}
 		b.WriteString(section)
 	}

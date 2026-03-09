@@ -1,6 +1,7 @@
 package query
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -98,6 +99,11 @@ func (e *Engine) Index() (*IndexResult, error) {
 
 	e.graph.BuildEdges()
 	e.graphLoaded = true
+
+	// Persist resolved import paths to SQLite (must happen after BuildEdges resolves them)
+	if err := e.store.SaveResolvedPaths(e.graph.Files()); err != nil {
+		return nil, fmt.Errorf("saving resolved paths: %w", err)
+	}
 
 	// Persist edges to SQLite
 	if err := e.store.SaveEdges(e.graph.Edges()); err != nil {
@@ -215,6 +221,11 @@ func (e *Engine) Search(query string) []indexer.Symbol {
 
 func (e *Engine) Stats() (indexer.IndexStats, error) {
 	return e.store.Stats()
+}
+
+// StoreDB returns the underlying SQLite database handle for use by other packages (e.g. schema storage).
+func (e *Engine) StoreDB() *sql.DB {
+	return e.store.DB()
 }
 
 func (e *Engine) Close() error {
