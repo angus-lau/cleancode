@@ -219,6 +219,70 @@ func (e *Engine) Search(query string) []indexer.Symbol {
 	return results
 }
 
+// SymbolContext holds everything needed for explaining a symbol.
+type SymbolContext struct {
+	Symbol     indexer.Symbol
+	Source     string // actual source code
+	Callers    []indexer.CallerResult
+	Dependents []indexer.DependentResult
+}
+
+// GetSymbolContext finds a symbol and gathers its callers and dependents.
+func (e *Engine) GetSymbolContext(symbolName string) (*SymbolContext, error) {
+	// Find the symbol
+	results := e.Search(symbolName)
+	if len(results) == 0 {
+		return nil, fmt.Errorf("symbol %q not found", symbolName)
+	}
+
+	// Pick the best match (exact name match first, then first result)
+	var sym indexer.Symbol
+	found := false
+	for _, s := range results {
+		if s.Name == symbolName {
+			sym = s
+			found = true
+			break
+		}
+	}
+	if !found {
+		sym = results[0]
+	}
+
+	// Read the source code for this symbol
+	source := ""
+	content, err := os.ReadFile(sym.FilePath)
+	if err == nil {
+		lines := strings.Split(string(content), "\n")
+		start := sym.StartLine - 1
+		end := sym.EndLine
+		if start < 0 {
+			start = 0
+		}
+		if end > len(lines) {
+			end = len(lines)
+		}
+		source = strings.Join(lines[start:end], "\n")
+	}
+
+	// Get callers
+	callers := e.Callers(sym.Name)
+
+	// Get dependents of the file this symbol is in
+	relPath := sym.FilePath
+	if strings.HasPrefix(relPath, e.rootPath) {
+		relPath = strings.TrimPrefix(relPath, e.rootPath+"/")
+	}
+	dependents := e.Dependents(relPath)
+
+	return &SymbolContext{
+		Symbol:     sym,
+		Source:     source,
+		Callers:    callers,
+		Dependents: dependents,
+	}, nil
+}
+
 func (e *Engine) Stats() (indexer.IndexStats, error) {
 	return e.store.Stats()
 }

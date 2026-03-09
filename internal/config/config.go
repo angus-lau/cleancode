@@ -6,11 +6,17 @@ import (
 	"path/filepath"
 )
 
+type CustomAgent struct {
+	Name   string `json:"name"`
+	Prompt string `json:"prompt"`
+}
+
 type Config struct {
-	BaseBranch string            `json:"baseBranch"`
-	Agents     map[string]bool   `json:"agents"`
-	Schema     *SchemaConfig     `json:"schema,omitempty"`
-	Ignore     []string          `json:"ignore"`
+	BaseBranch   string            `json:"baseBranch"`
+	Agents       map[string]bool   `json:"agents"`
+	CustomAgents []CustomAgent     `json:"customAgents,omitempty"`
+	Schema       *SchemaConfig     `json:"schema,omitempty"`
+	Ignore       []string          `json:"ignore"`
 }
 
 type SchemaConfig struct {

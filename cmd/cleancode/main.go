@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
+	"strings"
 	"time"
 
 	"github.com/angus/cleancode/internal/agents"
@@ -177,7 +177,7 @@ var reviewCmd = &cobra.Command{
 
 		formatted := context.FormatForAgent(ctx)
 
-		// Build agent list from config
+		// Build agent list from config (presets + custom)
 		var enabledAgents []agents.AgentConfig
 		for _, preset := range agents.PresetAgents {
 			enabled, exists := cfg.Agents[preset.Name]
@@ -188,6 +188,13 @@ var reviewCmd = &cobra.Command{
 			} else if preset.Enabled {
 				enabledAgents = append(enabledAgents, preset)
 			}
+		}
+		for _, custom := range cfg.CustomAgents {
+			enabledAgents = append(enabledAgents, agents.AgentConfig{
+				Name:    custom.Name,
+				Prompt:  custom.Prompt,
+				Enabled: true,
+			})
 		}
 
 		fmt.Printf("%sRunning review agents%s ...\n\n", blue, reset)
@@ -395,6 +402,89 @@ var hookCmd = &cobra.Command{
 	},
 }
 
+var explainCmd = &cobra.Command{
+	Use:   "explain <symbol>",
+	Short: "AI-powered explanation of a symbol with full codebase context",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		root, _ := filepath.Abs(rootFlag)
+
+		engine, err := query.NewEngine(root)
+		if err != nil {
+			return err
+		}
+		defer engine.Close()
+
+		fmt.Printf("%sLooking up %s%s%s ...\n", blue, cyan, args[0], reset)
+
+		symCtx, err := engine.GetSymbolContext(args[0])
+		if err != nil {
+			return err
+		}
+
+		// Format context for Claude
+		var b strings.Builder
+		fmt.Fprintf(&b, "## Symbol: %s\n", symCtx.Symbol.Name)
+		fmt.Fprintf(&b, "- Kind: %s\n", symCtx.Symbol.Kind)
+		fmt.Fprintf(&b, "- File: %s:%d-%d\n", symCtx.Symbol.FilePath, symCtx.Symbol.StartLine, symCtx.Symbol.EndLine)
+
+		if symCtx.Source != "" {
+			// Cap source at 5000 chars
+			src := symCtx.Source
+			if len(src) > 5000 {
+				src = src[:5000] + "\n... (truncated)"
+			}
+			fmt.Fprintf(&b, "\n## Source Code\n```\n%s\n```\n", src)
+		}
+
+		if len(symCtx.Callers) > 0 {
+			fmt.Fprintf(&b, "\n## Callers (%d)\n", len(symCtx.Callers))
+			for i, c := range symCtx.Callers {
+				if i >= 15 {
+					fmt.Fprintf(&b, "- ... and %d more\n", len(symCtx.Callers)-15)
+					break
+				}
+				fmt.Fprintf(&b, "- %s (%s) at %s:%d\n", c.Symbol.Name, c.Symbol.Kind, c.Symbol.FilePath, c.CallLine)
+			}
+		}
+
+		if len(symCtx.Dependents) > 0 {
+			fmt.Fprintf(&b, "\n## Files That Import This File (%d)\n", len(symCtx.Dependents))
+			for i, d := range symCtx.Dependents {
+				if i >= 10 {
+					fmt.Fprintf(&b, "- ... and %d more\n", len(symCtx.Dependents)-10)
+					break
+				}
+				fmt.Fprintf(&b, "- %s (imports: %s)\n", d.FilePath, strings.Join(d.Imports, ", "))
+			}
+		}
+
+		// Load schema context if available
+		dbSchema, schemaErr := schema.LoadFromStore(engine.StoreDB())
+		if schemaErr == nil && dbSchema != nil {
+			// Check if the source references any tables
+			referenced := dbSchema.FindReferencedTables(symCtx.Source)
+			if len(referenced) > 0 {
+				fmt.Fprintf(&b, "\n## Referenced Database Tables\n")
+				for _, t := range referenced {
+					b.WriteString(schema.FormatTable(&t))
+					b.WriteString("\n")
+				}
+			}
+		}
+
+		fmt.Printf("%sAsking Claude%s ...\n\n", blue, reset)
+
+		explanation, err := agents.Explain(b.String())
+		if err != nil {
+			return err
+		}
+
+		fmt.Println(explanation)
+		return nil
+	},
+}
+
 var watchCmd = &cobra.Command{
 	Use:   "watch",
 	Short: "Watch for file changes and re-index automatically",
@@ -439,7 +529,7 @@ func init() {
 	reviewCmd.Flags().StringP("base", "b", "", "Base branch to diff against (default from config)")
 	initCmd.Flags().String("db", "", "Database connection string for schema fetching")
 
-	rootCmd.AddCommand(initCmd, indexCmd, reviewCmd, searchCmd, callersCmd, statsCmd, hookCmd, watchCmd)
+	rootCmd.AddCommand(initCmd, indexCmd, reviewCmd, searchCmd, callersCmd, statsCmd, hookCmd, watchCmd, explainCmd)
 }
 
 func main() {
