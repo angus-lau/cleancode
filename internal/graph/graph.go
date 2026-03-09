@@ -153,6 +153,16 @@ func (g *DependencyGraph) GetDependencies(filePath string) []indexer.DependentRe
 	return results
 }
 
+func (g *DependencyGraph) SymbolsInFile(filePath string) []indexer.Symbol {
+	var symbols []indexer.Symbol
+	for _, sym := range g.symbolIndex {
+		if sym.FilePath == filePath {
+			symbols = append(symbols, sym)
+		}
+	}
+	return symbols
+}
+
 func (g *DependencyGraph) GetSymbol(name string) (indexer.Symbol, bool) {
 	for _, sym := range g.symbolIndex {
 		if sym.Name == name {

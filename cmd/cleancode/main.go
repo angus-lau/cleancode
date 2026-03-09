@@ -75,7 +75,26 @@ var reviewCmd = &cobra.Command{
 			return nil
 		}
 
-		// TODO: enrich with index data (callers, dependents)
+		// Enrich with index data
+		fmt.Printf("%sLoading index%s ...\n", blue, reset)
+		engine, err := query.NewEngine(root)
+		if err != nil {
+			fmt.Printf("%sWarning: could not load index, reviewing without context: %v%s\n", yellow, err, reset)
+		} else {
+			// Re-index to pick up any new changes
+			if _, err := engine.Index(); err != nil {
+				fmt.Printf("%sWarning: indexing failed: %v%s\n", yellow, err, reset)
+			} else {
+				absFiles := assembler.ChangedFilesAbsolute(ctx.ChangedFiles)
+				changedSymbols, callers, dependents := engine.EnrichForReview(absFiles)
+				assembler.Enrich(ctx, callers, dependents, changedSymbols)
+				fmt.Printf("  Changed symbols: %d\n", len(changedSymbols))
+				fmt.Printf("  Symbols with callers: %d\n", len(callers))
+				fmt.Printf("  Files with dependents: %d\n", len(dependents))
+			}
+			engine.Close()
+		}
+
 		formatted := context.FormatForAgent(ctx)
 
 		fmt.Printf("%sRunning review agents%s ...\n\n", blue, reset)

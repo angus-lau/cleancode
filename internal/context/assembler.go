@@ -2,10 +2,17 @@ package context
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"regexp"
 	"strings"
+)
+
+const (
+	// MaxContextChars caps the total formatted context sent to each agent.
+	// ~50K chars ≈ ~12K tokens, well within context limits.
+	MaxContextChars = 50_000
+	// MaxDiffChars caps the diff portion to leave room for enrichment.
+	MaxDiffChars = 30_000
 )
 
 type ReviewContext struct {
@@ -14,7 +21,6 @@ type ReviewContext struct {
 	ChangedSymbols []string
 	Callers        map[string][]string
 	Dependents     map[string][]string
-	FileContents   map[string]string
 }
 
 type Assembler struct {
@@ -32,15 +38,6 @@ func (a *Assembler) AssembleDiffContext(baseBranch string) (*ReviewContext, erro
 	}
 
 	changedFiles := parseChangedFiles(diff)
-	fileContents := make(map[string]string)
-
-	for _, file := range changedFiles {
-		content, err := os.ReadFile(file)
-		if err != nil {
-			continue // File may have been deleted
-		}
-		fileContents[file] = string(content)
-	}
 
 	return &ReviewContext{
 		Diff:           diff,
@@ -48,7 +45,6 @@ func (a *Assembler) AssembleDiffContext(baseBranch string) (*ReviewContext, erro
 		ChangedSymbols: nil,
 		Callers:        make(map[string][]string),
 		Dependents:     make(map[string][]string),
-		FileContents:   fileContents,
 	}, nil
 }
 
@@ -58,38 +54,82 @@ func (a *Assembler) Enrich(ctx *ReviewContext, callers, dependents map[string][]
 	ctx.ChangedSymbols = changedSymbols
 }
 
+// ChangedFilesAbsolute returns changed file paths as absolute paths.
+func (a *Assembler) ChangedFilesAbsolute(changedFiles []string) []string {
+	abs := make([]string, len(changedFiles))
+	for i, f := range changedFiles {
+		if strings.HasPrefix(f, "/") {
+			abs[i] = f
+		} else {
+			abs[i] = a.rootPath + "/" + f
+		}
+	}
+	return abs
+}
+
 func FormatForAgent(ctx *ReviewContext) string {
 	var b strings.Builder
+	budget := MaxContextChars
 
-	b.WriteString("## Diff\n```diff\n")
-	b.WriteString(ctx.Diff)
-	b.WriteString("\n```\n")
+	// Diff (capped)
+	diff := ctx.Diff
+	if len(diff) > MaxDiffChars {
+		diff = diff[:MaxDiffChars] + "\n... (diff truncated)\n"
+	}
+	section := "## Diff\n```diff\n" + diff + "\n```\n"
+	b.WriteString(section)
+	budget -= len(section)
 
-	if len(ctx.ChangedSymbols) > 0 {
-		b.WriteString("\n## Changed Symbols\n")
+	// Changed symbols
+	if len(ctx.ChangedSymbols) > 0 && budget > 500 {
+		section = "\n## Changed Symbols\n"
 		for _, s := range ctx.ChangedSymbols {
-			fmt.Fprintf(&b, "- %s\n", s)
+			line := fmt.Sprintf("- %s\n", s)
+			if budget-len(section)-len(line) < 0 {
+				section += "- ... (truncated)\n"
+				break
+			}
+			section += line
 		}
+		b.WriteString(section)
+		budget -= len(section)
 	}
 
-	if len(ctx.Callers) > 0 {
-		b.WriteString("\n## Callers of Changed Symbols\n")
+	// Callers
+	if len(ctx.Callers) > 0 && budget > 500 {
+		section = "\n## Callers of Changed Symbols\n"
 		for sym, callerList := range ctx.Callers {
-			fmt.Fprintf(&b, "### %s\n", sym)
+			header := fmt.Sprintf("### %s (%d callers)\n", sym, len(callerList))
+			section += header
 			for _, c := range callerList {
-				fmt.Fprintf(&b, "- %s\n", c)
+				line := fmt.Sprintf("- %s\n", c)
+				if budget-len(section)-len(line) < 0 {
+					section += "- ... (truncated)\n"
+					break
+				}
+				section += line
 			}
 		}
+		b.WriteString(section)
+		budget -= len(section)
 	}
 
-	if len(ctx.Dependents) > 0 {
-		b.WriteString("\n## Files That Import Changed Files\n")
+	// Dependents
+	if len(ctx.Dependents) > 0 && budget > 500 {
+		section = "\n## Files That Import Changed Files\n"
 		for file, deps := range ctx.Dependents {
-			fmt.Fprintf(&b, "### %s\n", file)
+			header := fmt.Sprintf("### %s\n", file)
+			section += header
 			for _, d := range deps {
-				fmt.Fprintf(&b, "- %s\n", d)
+				line := fmt.Sprintf("- %s\n", d)
+				if budget-len(section)-len(line) < 0 {
+					section += "- ... (truncated)\n"
+					break
+				}
+				section += line
 			}
 		}
+		b.WriteString(section)
 	}
 
 	return b.String()

@@ -3,6 +3,7 @@ package agents
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"sync"
 	"time"
@@ -62,9 +63,11 @@ IMPORTANT: Return ONLY the JSON array, no other text.
 %s`, agent.Prompt, context)
 
 	cmd := exec.Command("claude", "-p", prompt)
-	output, err := cmd.Output()
+	// Unset CLAUDECODE env var to allow nested invocations
+	cmd.Env = append(os.Environ(), "CLAUDECODE=")
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return errorResult(agent.Name, start, fmt.Errorf("claude cli: %w", err))
+		return errorResult(agent.Name, start, fmt.Errorf("claude cli: %w\n%s", err, string(output)))
 	}
 
 	findings := parseFindings(string(output), agent.Name)

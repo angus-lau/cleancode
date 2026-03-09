@@ -111,6 +111,54 @@ func (e *Engine) Index() (*IndexResult, error) {
 	}, nil
 }
 
+// EnrichForReview takes a list of changed files (absolute paths) and returns
+// the changed symbols, their callers, and file-level dependents.
+func (e *Engine) EnrichForReview(changedFiles []string) (changedSymbols []string, callers map[string][]string, dependents map[string][]string) {
+	callers = make(map[string][]string)
+	dependents = make(map[string][]string)
+
+	const maxCallersPerSymbol = 10
+	const maxDependentsPerFile = 10
+
+	for _, filePath := range changedFiles {
+		// Get symbols defined in this file
+		symbols := e.graph.SymbolsInFile(filePath)
+		for _, sym := range symbols {
+			changedSymbols = append(changedSymbols, fmt.Sprintf("%s (%s, %s:%d)", sym.Name, sym.Kind, sym.FilePath, sym.StartLine))
+
+			// Get callers for each symbol
+			symCallers := e.graph.GetCallers(sym.Name)
+			if len(symCallers) > 0 {
+				var callerStrs []string
+				for i, c := range symCallers {
+					if i >= maxCallersPerSymbol {
+						callerStrs = append(callerStrs, fmt.Sprintf("... and %d more", len(symCallers)-maxCallersPerSymbol))
+						break
+					}
+					callerStrs = append(callerStrs, fmt.Sprintf("%s (%s, %s:%d)", c.Symbol.Name, c.Symbol.Kind, c.Symbol.FilePath, c.CallLine))
+				}
+				callers[sym.Name] = callerStrs
+			}
+		}
+
+		// Get file-level dependents
+		deps := e.graph.GetDependents(filePath)
+		if len(deps) > 0 {
+			var depStrs []string
+			for i, d := range deps {
+				if i >= maxDependentsPerFile {
+					depStrs = append(depStrs, fmt.Sprintf("... and %d more", len(deps)-maxDependentsPerFile))
+					break
+				}
+				depStrs = append(depStrs, fmt.Sprintf("%s (imports: %s)", d.FilePath, strings.Join(d.Imports, ", ")))
+			}
+			dependents[filePath] = depStrs
+		}
+	}
+
+	return
+}
+
 func (e *Engine) Callers(symbolName string) []indexer.CallerResult {
 	return e.graph.GetCallers(symbolName)
 }
