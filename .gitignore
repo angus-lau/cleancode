@@ -1,0 +1,4 @@
+.cleancode/
+/cleancode
+*.exe
+.env
