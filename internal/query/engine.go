@@ -13,14 +13,18 @@ import (
 )
 
 var (
-	sourcePatterns = []string{"*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs", "*.cjs"}
+	sourcePatterns = []string{"*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs", "*.cjs", "*.py", "*.go"}
 	ignoreDirs     = map[string]bool{
-		"node_modules": true,
-		"dist":         true,
-		"build":        true,
-		".git":         true,
-		"coverage":     true,
-		".cleancode":   true,
+		"node_modules":  true,
+		"dist":          true,
+		"build":         true,
+		".git":          true,
+		"coverage":      true,
+		".cleancode":    true,
+		"__pycache__":   true,
+		"venv":          true,
+		".venv":         true,
+		"vendor":        true,
 	}
 )
 

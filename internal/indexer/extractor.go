@@ -9,37 +9,69 @@ import (
 	"strings"
 
 	sitter "github.com/smacker/go-tree-sitter"
+	"github.com/smacker/go-tree-sitter/golang"
 	"github.com/smacker/go-tree-sitter/javascript"
+	"github.com/smacker/go-tree-sitter/python"
 	"github.com/smacker/go-tree-sitter/typescript/tsx"
 	"github.com/smacker/go-tree-sitter/typescript/typescript"
 )
 
+// LangHandler extracts symbols and imports from a parsed AST.
+type LangHandler interface {
+	ExtractSymbols(root *sitter.Node, source []byte, filePath string) []Symbol
+	ExtractImports(root *sitter.Node, source []byte) []ImportRef
+}
+
+type langEntry struct {
+	parser  *sitter.Parser
+	handler LangHandler
+}
+
 type Extractor struct {
-	tsParser  *sitter.Parser
-	tsxParser *sitter.Parser
-	jsParser  *sitter.Parser
+	langs map[string]*langEntry // extension -> langEntry
 }
 
 func NewExtractor() *Extractor {
+	e := &Extractor{langs: make(map[string]*langEntry)}
+
+	// TypeScript
 	tsP := sitter.NewParser()
 	tsP.SetLanguage(typescript.GetLanguage())
+	tsHandler := &TSHandler{}
+	e.langs[".ts"] = &langEntry{parser: tsP, handler: tsHandler}
 
+	// TSX
 	tsxP := sitter.NewParser()
 	tsxP.SetLanguage(tsx.GetLanguage())
+	e.langs[".tsx"] = &langEntry{parser: tsxP, handler: tsHandler}
 
+	// JavaScript
 	jsP := sitter.NewParser()
 	jsP.SetLanguage(javascript.GetLanguage())
+	e.langs[".js"] = &langEntry{parser: jsP, handler: tsHandler}
+	e.langs[".mjs"] = &langEntry{parser: jsP, handler: tsHandler}
+	e.langs[".cjs"] = &langEntry{parser: jsP, handler: tsHandler}
+	e.langs[".jsx"] = &langEntry{parser: jsP, handler: tsHandler}
 
-	return &Extractor{
-		tsParser:  tsP,
-		tsxParser: tsxP,
-		jsParser:  jsP,
-	}
+	// Python
+	pyP := sitter.NewParser()
+	pyP.SetLanguage(python.GetLanguage())
+	pyHandler := &PythonHandler{}
+	e.langs[".py"] = &langEntry{parser: pyP, handler: pyHandler}
+
+	// Go
+	goP := sitter.NewParser()
+	goP.SetLanguage(golang.GetLanguage())
+	goHandler := &GoHandler{}
+	e.langs[".go"] = &langEntry{parser: goP, handler: goHandler}
+
+	return e
 }
 
 func (e *Extractor) ParseFile(filePath string) (*FileNode, error) {
-	parser := e.parserForFile(filePath)
-	if parser == nil {
+	ext := strings.ToLower(filepath.Ext(filePath))
+	entry, ok := e.langs[ext]
+	if !ok {
 		return nil, fmt.Errorf("unsupported file type: %s", filePath)
 	}
 
@@ -48,15 +80,15 @@ func (e *Extractor) ParseFile(filePath string) (*FileNode, error) {
 		return nil, err
 	}
 
-	tree, err := parser.ParseCtx(context.Background(), nil, content)
+	tree, err := entry.parser.ParseCtx(context.Background(), nil, content)
 	if err != nil {
 		return nil, err
 	}
 	defer tree.Close()
 
 	root := tree.RootNode()
-	symbols := extractSymbols(root, content, filePath)
-	imports := extractImports(root, content)
+	symbols := entry.handler.ExtractSymbols(root, content, filePath)
+	imports := entry.handler.ExtractImports(root, content)
 
 	stat, err := os.Stat(filePath)
 	if err != nil {
@@ -70,226 +102,15 @@ func (e *Extractor) ParseFile(filePath string) (*FileNode, error) {
 		Symbols:      symbols,
 		Imports:      imports,
 		LastModified: stat.ModTime().UnixMilli(),
-		Hash:          hash,
+		Hash:         hash,
 	}, nil
 }
 
-func (e *Extractor) parserForFile(filePath string) *sitter.Parser {
-	ext := strings.ToLower(filepath.Ext(filePath))
-	switch ext {
-	case ".ts":
-		return e.tsParser
-	case ".tsx":
-		return e.tsxParser
-	case ".js", ".mjs", ".cjs", ".jsx":
-		return e.jsParser
-	default:
-		return nil
+// SupportedExtensions returns all file extensions the extractor can handle.
+func (e *Extractor) SupportedExtensions() []string {
+	exts := make([]string, 0, len(e.langs))
+	for ext := range e.langs {
+		exts = append(exts, ext)
 	}
-}
-
-func extractSymbols(node *sitter.Node, source []byte, filePath string) []Symbol {
-	var symbols []Symbol
-	walkForSymbols(node, source, filePath, &symbols, false)
-	return symbols
-}
-
-func walkForSymbols(node *sitter.Node, source []byte, filePath string, symbols *[]Symbol, isExported bool) {
-	nodeType := node.Type()
-
-	switch nodeType {
-	case "export_statement":
-		for i := 0; i < int(node.ChildCount()); i++ {
-			child := node.Child(i)
-			walkForSymbols(child, source, filePath, symbols, true)
-		}
-		return
-
-	case "function_declaration":
-		if name := node.ChildByFieldName("name"); name != nil {
-			sym := Symbol{
-				Name:      name.Content(source),
-				Kind:      Function,
-				FilePath:  filePath,
-				StartLine: int(node.StartPoint().Row) + 1,
-				EndLine:   int(node.EndPoint().Row) + 1,
-			}
-			if isExported {
-				sym.ExportName = sym.Name
-			}
-			*symbols = append(*symbols, sym)
-		}
-
-	case "class_declaration":
-		if name := node.ChildByFieldName("name"); name != nil {
-			className := name.Content(source)
-			sym := Symbol{
-				Name:      className,
-				Kind:      Class,
-				FilePath:  filePath,
-				StartLine: int(node.StartPoint().Row) + 1,
-				EndLine:   int(node.EndPoint().Row) + 1,
-			}
-			if isExported {
-				sym.ExportName = sym.Name
-			}
-			*symbols = append(*symbols, sym)
-
-			// Extract methods
-			if body := node.ChildByFieldName("body"); body != nil {
-				for i := 0; i < int(body.ChildCount()); i++ {
-					member := body.Child(i)
-					if member.Type() == "method_definition" {
-						if methodName := member.ChildByFieldName("name"); methodName != nil {
-							*symbols = append(*symbols, Symbol{
-								Name:      className + "." + methodName.Content(source),
-								Kind:      Method,
-								FilePath:  filePath,
-								StartLine: int(member.StartPoint().Row) + 1,
-								EndLine:   int(member.EndPoint().Row) + 1,
-							})
-						}
-					}
-				}
-			}
-		}
-
-	case "lexical_declaration", "variable_declaration":
-		for i := 0; i < int(node.ChildCount()); i++ {
-			declarator := node.Child(i)
-			if declarator.Type() == "variable_declarator" {
-				if name := declarator.ChildByFieldName("name"); name != nil {
-					kind := Variable
-					if value := declarator.ChildByFieldName("value"); value != nil {
-						if value.Type() == "arrow_function" || value.Type() == "function" {
-							kind = Function
-						}
-					}
-					sym := Symbol{
-						Name:      name.Content(source),
-						Kind:      kind,
-						FilePath:  filePath,
-						StartLine: int(node.StartPoint().Row) + 1,
-						EndLine:   int(node.EndPoint().Row) + 1,
-					}
-					if isExported {
-						sym.ExportName = sym.Name
-					}
-					*symbols = append(*symbols, sym)
-				}
-			}
-		}
-
-	case "interface_declaration":
-		if name := node.ChildByFieldName("name"); name != nil {
-			sym := Symbol{
-				Name:      name.Content(source),
-				Kind:      Interface,
-				FilePath:  filePath,
-				StartLine: int(node.StartPoint().Row) + 1,
-				EndLine:   int(node.EndPoint().Row) + 1,
-			}
-			if isExported {
-				sym.ExportName = sym.Name
-			}
-			*symbols = append(*symbols, sym)
-		}
-
-	case "type_alias_declaration":
-		if name := node.ChildByFieldName("name"); name != nil {
-			sym := Symbol{
-				Name:      name.Content(source),
-				Kind:      TypeAlias,
-				FilePath:  filePath,
-				StartLine: int(node.StartPoint().Row) + 1,
-				EndLine:   int(node.EndPoint().Row) + 1,
-			}
-			if isExported {
-				sym.ExportName = sym.Name
-			}
-			*symbols = append(*symbols, sym)
-		}
-
-	case "enum_declaration":
-		if name := node.ChildByFieldName("name"); name != nil {
-			sym := Symbol{
-				Name:      name.Content(source),
-				Kind:      Enum,
-				FilePath:  filePath,
-				StartLine: int(node.StartPoint().Row) + 1,
-				EndLine:   int(node.EndPoint().Row) + 1,
-			}
-			if isExported {
-				sym.ExportName = sym.Name
-			}
-			*symbols = append(*symbols, sym)
-		}
-	}
-
-	// Recurse into children (unless we already handled them)
-	if nodeType != "export_statement" {
-		for i := 0; i < int(node.ChildCount()); i++ {
-			walkForSymbols(node.Child(i), source, filePath, symbols, false)
-		}
-	}
-}
-
-func extractImports(root *sitter.Node, source []byte) []ImportRef {
-	var imports []ImportRef
-
-	for i := 0; i < int(root.ChildCount()); i++ {
-		child := root.Child(i)
-		if child.Type() != "import_statement" {
-			continue
-		}
-
-		srcNode := child.ChildByFieldName("source")
-		if srcNode == nil {
-			continue
-		}
-
-		sourcePath := strings.Trim(srcNode.Content(source), "'\"")
-		var specifiers []string
-		isDefault := false
-		isNamespace := false
-
-		for j := 0; j < int(child.ChildCount()); j++ {
-			part := child.Child(j)
-			if part.Type() == "import_clause" {
-				for k := 0; k < int(part.ChildCount()); k++ {
-					spec := part.Child(k)
-					switch spec.Type() {
-					case "identifier":
-						specifiers = append(specifiers, spec.Content(source))
-						isDefault = true
-					case "named_imports":
-						for l := 0; l < int(spec.ChildCount()); l++ {
-							named := spec.Child(l)
-							if named.Type() == "import_specifier" {
-								if alias := named.ChildByFieldName("alias"); alias != nil {
-									specifiers = append(specifiers, alias.Content(source))
-								} else if name := named.ChildByFieldName("name"); name != nil {
-									specifiers = append(specifiers, name.Content(source))
-								}
-							}
-						}
-					case "namespace_import":
-						if name := spec.ChildByFieldName("name"); name != nil {
-							specifiers = append(specifiers, name.Content(source))
-						}
-						isNamespace = true
-					}
-				}
-			}
-		}
-
-		imports = append(imports, ImportRef{
-			Source:      sourcePath,
-			Specifiers:  specifiers,
-			IsDefault:   isDefault,
-			IsNamespace: isNamespace,
-		})
-	}
-
-	return imports
+	return exts
 }
