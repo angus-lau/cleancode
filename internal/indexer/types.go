@@ -20,6 +20,7 @@ type Symbol struct {
 	StartLine  int        `json:"startLine"`
 	EndLine    int        `json:"endLine"`
 	ExportName string     `json:"exportName,omitempty"`
+	References []string   `json:"references,omitempty"` // imported names actually used in this symbol's body
 }
 
 type ImportRef struct {

@@ -90,6 +90,17 @@ func (e *Extractor) ParseFile(filePath string) (*FileNode, error) {
 	symbols := entry.handler.ExtractSymbols(root, content, filePath)
 	imports := entry.handler.ExtractImports(root, content)
 
+	// Resolve references: walk each symbol's body to find which imports it actually uses
+	importedNames := make(map[string]bool)
+	for _, imp := range imports {
+		for _, spec := range imp.Specifiers {
+			importedNames[spec] = true
+		}
+	}
+	if len(importedNames) > 0 {
+		resolveReferences(root, content, symbols, importedNames)
+	}
+
 	stat, err := os.Stat(filePath)
 	if err != nil {
 		return nil, err

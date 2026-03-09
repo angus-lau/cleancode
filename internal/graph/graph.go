@@ -51,19 +51,36 @@ func (g *DependencyGraph) BuildEdges() {
 			}
 			g.importerIndex[resolved][filePath] = true
 
-			// Create edges from local symbols to imported symbols
+			// Build a lookup of specifier -> target symbol ID for this import
+			specToTarget := make(map[string]string)
 			for _, spec := range imp.Specifiers {
-				// Find target symbol by matching name
-				var targetID string
 				for id, sym := range g.symbolIndex {
 					if sym.FilePath == resolved && sym.Name == spec {
-						targetID = id
+						specToTarget[spec] = id
 						break
 					}
 				}
-				if targetID != "" {
-					for _, localSym := range file.Symbols {
-						localID := fmt.Sprintf("%s:%s:%d", filePath, localSym.Name, localSym.StartLine)
+			}
+
+			// Create precise edges: only link a symbol to an import it actually references
+			for _, localSym := range file.Symbols {
+				localID := fmt.Sprintf("%s:%s:%d", filePath, localSym.Name, localSym.StartLine)
+
+				if len(localSym.References) > 0 {
+					// Precise mode: only create edges for actual references
+					for _, ref := range localSym.References {
+						if targetID, ok := specToTarget[ref]; ok {
+							g.edges = append(g.edges, indexer.Edge{
+								From: localID,
+								To:   targetID,
+								Type: "calls",
+							})
+						}
+					}
+				} else if localSym.Kind == indexer.Class || localSym.Kind == indexer.Interface || localSym.Kind == indexer.TypeAlias {
+					// Fallback only for classes/interfaces/types (their bodies aren't walked):
+					// link to all imports from this file
+					for _, targetID := range specToTarget {
 						g.edges = append(g.edges, indexer.Edge{
 							From: localID,
 							To:   targetID,
