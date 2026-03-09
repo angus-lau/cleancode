@@ -93,6 +93,11 @@ func (e *Engine) Index() (*IndexResult, error) {
 
 	e.graph.BuildEdges()
 
+	// Persist edges to SQLite
+	if err := e.store.SaveEdges(e.graph.Edges()); err != nil {
+		return nil, fmt.Errorf("saving edges: %w", err)
+	}
+
 	stats := e.graph.Stats()
 	return &IndexResult{
 		Files:   stats.Files,

@@ -170,6 +170,10 @@ func (g *DependencyGraph) AllSymbols() []indexer.Symbol {
 	return symbols
 }
 
+func (g *DependencyGraph) Edges() []indexer.Edge {
+	return g.edges
+}
+
 func (g *DependencyGraph) Stats() indexer.IndexStats {
 	return indexer.IndexStats{
 		Files:   len(g.files),

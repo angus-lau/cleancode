@@ -1,25 +1,18 @@
 package agents
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"os"
+	"os/exec"
 	"sync"
 	"time"
 )
 
 type Orchestrator struct {
-	apiKey string
 	agents []AgentConfig
-	client *http.Client
 }
 
 func NewOrchestrator(customAgents []AgentConfig) *Orchestrator {
-	apiKey := os.Getenv("ANTHROPIC_API_KEY")
-
 	agentList := customAgents
 	if len(agentList) == 0 {
 		for _, a := range PresetAgents {
@@ -29,11 +22,7 @@ func NewOrchestrator(customAgents []AgentConfig) *Orchestrator {
 		}
 	}
 
-	return &Orchestrator{
-		apiKey: apiKey,
-		agents: agentList,
-		client: &http.Client{Timeout: 120 * time.Second},
-	}
+	return &Orchestrator{agents: agentList}
 }
 
 func (o *Orchestrator) Review(formattedContext string) []ReviewResult {
@@ -55,7 +44,9 @@ func (o *Orchestrator) Review(formattedContext string) []ReviewResult {
 func (o *Orchestrator) runAgent(agent AgentConfig, context string) ReviewResult {
 	start := time.Now()
 
-	userMessage := fmt.Sprintf(`Review the following code changes and codebase context. Return your findings as a JSON array.
+	prompt := fmt.Sprintf(`%s
+
+Review the following code changes and codebase context. Return your findings as a JSON array.
 
 Each finding should have:
 - "severity": "critical" | "warning" | "info"
@@ -68,66 +59,15 @@ If you find no issues, return an empty array: []
 
 IMPORTANT: Return ONLY the JSON array, no other text.
 
-%s`, context)
+%s`, agent.Prompt, context)
 
-	body := map[string]any{
-		"model":      "claude-sonnet-4-6",
-		"max_tokens": 4096,
-		"system":     agent.Prompt,
-		"messages": []map[string]string{
-			{"role": "user", "content": userMessage},
-		},
-	}
-
-	jsonBody, err := json.Marshal(body)
+	cmd := exec.Command("claude", "-p", prompt)
+	output, err := cmd.Output()
 	if err != nil {
-		return errorResult(agent.Name, start, err)
+		return errorResult(agent.Name, start, fmt.Errorf("claude cli: %w", err))
 	}
 
-	req, err := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewReader(jsonBody))
-	if err != nil {
-		return errorResult(agent.Name, start, err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", o.apiKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
-
-	resp, err := o.client.Do(req)
-	if err != nil {
-		return errorResult(agent.Name, start, err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return errorResult(agent.Name, start, err)
-	}
-
-	if resp.StatusCode != 200 {
-		return errorResult(agent.Name, start, fmt.Errorf("API returned %d: %s", resp.StatusCode, string(respBody)))
-	}
-
-	// Parse Anthropic response
-	var apiResp struct {
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-	}
-	if err := json.Unmarshal(respBody, &apiResp); err != nil {
-		return errorResult(agent.Name, start, err)
-	}
-
-	text := ""
-	for _, block := range apiResp.Content {
-		if block.Type == "text" {
-			text = block.Text
-			break
-		}
-	}
-
-	findings := parseFindings(text, agent.Name)
+	findings := parseFindings(string(output), agent.Name)
 	return ReviewResult{
 		Agent:    agent.Name,
 		Findings: findings,
