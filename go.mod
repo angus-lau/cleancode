@@ -1,4 +1,4 @@
-module github.com/angus/cleancode
+module github.com/angus-lau/cleancode
 
 go 1.26.1
 

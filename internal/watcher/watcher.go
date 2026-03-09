@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/angus/cleancode/internal/query"
+	"github.com/angus-lau/cleancode/internal/query"
 	"github.com/fsnotify/fsnotify"
 )
 

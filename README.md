@@ -17,15 +17,42 @@ cleancode review   →  Diffs against your base branch
 
 ## Install
 
-Requires Go 1.21+, [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code), and a C compiler (for SQLite/tree-sitter).
+### One-liner (macOS / Linux)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/angus-lau/cleancode/main/scripts/install.sh | bash
+```
+
+### From source
+
+```bash
+git clone https://github.com/angus-lau/cleancode.git
+cd cleancode
+make install
+```
+
+### Manual build
 
 ```bash
 git clone https://github.com/angus-lau/cleancode.git
 cd cleancode
 go build -o cleancode ./cmd/cleancode/
-# Move to PATH
-mv cleancode /usr/local/bin/
+sudo mv cleancode /usr/local/bin/
 ```
+
+### Update
+
+```bash
+cd cleancode
+git pull
+make install
+```
+
+### Prerequisites
+
+- **Go 1.21+** — [go.dev/dl](https://go.dev/dl/)
+- **Claude Code CLI** — [docs.anthropic.com](https://docs.anthropic.com/en/docs/claude-code) (required for `review` and `explain`)
+- **C compiler** — Xcode CLI tools (macOS: `xcode-select --install`) or gcc (Linux: `sudo apt install gcc`)
 
 ## Quick start
 
@@ -82,6 +109,18 @@ cleancode review --base develop   # diff against specific branch
 **Two-pass architecture:**
 1. Parallel agents run independently via goroutines
 2. Synthesizer deduplicates findings, resolves conflicts, and prioritizes by impact
+
+### `cleancode explain <symbol>`
+
+AI-powered explanation of any symbol in your codebase. Gathers the source code, callers, dependents, and referenced DB tables, then asks Claude to explain it.
+
+```bash
+cleancode explain handleLogin
+cleancode explain UserService
+cleancode explain fetchTransactions
+```
+
+Output covers: what it does, how it works, who uses it, side effects, and edge cases.
 
 ### `cleancode search <query>`
 
@@ -147,6 +186,12 @@ cleancode hook remove
     "api-contract": true,
     "security": false
   },
+  "customAgents": [
+    {
+      "name": "compliance",
+      "prompt": "You are a compliance reviewer. Check for PII exposure, GDPR violations, and data retention issues.\n\nDo NOT flag: style issues or non-compliance concerns.\nOnly flag actual compliance risks."
+    }
+  ],
   "schema": {
     "provider": "postgres",
     "url": "$DATABASE_URL"
@@ -162,12 +207,34 @@ cleancode hook remove
 | Field | Description |
 |-------|-------------|
 | `baseBranch` | Branch to diff against for reviews (default: `main`) |
-| `agents` | Toggle individual review agents on/off |
+| `agents` | Toggle built-in review agents on/off |
+| `customAgents` | Define your own review agents with custom prompts |
 | `schema.provider` | Database type (`postgres`) |
 | `schema.url` | Connection string. Prefix with `$` to read from env var |
 | `ignore` | Glob patterns for files to skip during indexing |
 
+### Custom agents
+
+Add any number of custom review agents. They run alongside built-in agents and go through the synthesizer:
+
+```json
+{
+  "customAgents": [
+    {
+      "name": "accessibility",
+      "prompt": "You are an accessibility reviewer. Check for missing ARIA labels, keyboard navigation issues, and color contrast problems."
+    },
+    {
+      "name": "error-handling",
+      "prompt": "You are an error handling reviewer. Check for uncaught exceptions, missing try/catch blocks, and error messages that leak implementation details."
+    }
+  ]
+}
+```
+
 ## Review agents
+
+### Built-in agents
 
 | Agent | Default | What it checks |
 |-------|---------|----------------|
@@ -176,11 +243,13 @@ cleancode hook remove
 | `api-contract` | on | Breaking changes, removed fields, changed signatures |
 | `security` | off | SQL injection, auth bypass, secrets in code, OWASP top 10 |
 
-When 2+ agents produce findings, the **synthesizer** runs a second pass to:
-- Deduplicate overlapping findings
-- Resolve conflicting suggestions
-- Prioritize by actual impact
-- Preserve original agent attribution
+### Synthesizer (pass 2)
+
+When 2+ agents produce findings, the synthesizer automatically:
+- Deduplicates overlapping findings
+- Resolves conflicting suggestions
+- Prioritizes by actual impact
+- Preserves original agent attribution
 
 ## Language support
 
@@ -211,8 +280,9 @@ internal/
   context/assembler.go          Diff parsing, context enrichment, budget formatting
   agents/
     orchestrator.go             Parallel agent runner + synthesizer
-    presets.go                  Agent prompts
-    types.go                   Finding, ReviewResult types
+    explain.go                  AI symbol explanation via claude -p
+    presets.go                  Built-in agent prompts
+    types.go                    Finding, ReviewResult types
   config/config.go              .cleancode.json loading/saving
   schema/
     fetcher.go                  Postgres schema introspection
@@ -235,10 +305,3 @@ internal/
 | Flag | Description |
 |------|-------------|
 | `--root`, `-r` | Project root directory (default: `.`) |
-
-## Requirements
-
-- **Go 1.21+** for building
-- **Claude Code CLI** (`claude` command) for review agents
-- **C compiler** (gcc/clang) for CGo dependencies (SQLite, tree-sitter)
-- **PostgreSQL** (optional) for schema fetching

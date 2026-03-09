@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/angus/cleancode/internal/indexer"
+	"github.com/angus-lau/cleancode/internal/indexer"
 	_ "github.com/mattn/go-sqlite3"
 )
 

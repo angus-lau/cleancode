@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/angus/cleancode/internal/agents"
-	"github.com/angus/cleancode/internal/config"
-	"github.com/angus/cleancode/internal/context"
-	"github.com/angus/cleancode/internal/query"
-	"github.com/angus/cleancode/internal/schema"
-	"github.com/angus/cleancode/internal/watcher"
+	"github.com/angus-lau/cleancode/internal/agents"
+	"github.com/angus-lau/cleancode/internal/config"
+	"github.com/angus-lau/cleancode/internal/context"
+	"github.com/angus-lau/cleancode/internal/query"
+	"github.com/angus-lau/cleancode/internal/schema"
+	"github.com/angus-lau/cleancode/internal/watcher"
 	"github.com/spf13/cobra"
 )
 

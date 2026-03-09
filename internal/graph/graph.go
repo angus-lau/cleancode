@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/angus/cleancode/internal/indexer"
+	"github.com/angus-lau/cleancode/internal/indexer"
 )
 
 var tsExtensions = []string{".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}

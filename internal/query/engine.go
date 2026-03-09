@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/angus/cleancode/internal/graph"
-	"github.com/angus/cleancode/internal/indexer"
-	"github.com/angus/cleancode/internal/storage"
+	"github.com/angus-lau/cleancode/internal/graph"
+	"github.com/angus-lau/cleancode/internal/indexer"
+	"github.com/angus-lau/cleancode/internal/storage"
 )
 
 var (
