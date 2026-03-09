@@ -147,6 +147,129 @@ func (s *Store) SaveEdges(edges []indexer.Edge) error {
 	return tx.Commit()
 }
 
+// SearchSymbols finds symbols whose name contains the query (case-insensitive).
+func (s *Store) SearchSymbols(query string) ([]indexer.Symbol, error) {
+	rows, err := s.db.Query(
+		"SELECT name, kind, file_path, start_line, end_line, export_name FROM symbols WHERE name LIKE ? LIMIT 100",
+		"%"+query+"%",
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var symbols []indexer.Symbol
+	for rows.Next() {
+		var sym indexer.Symbol
+		var kind string
+		var exportName sql.NullString
+		if err := rows.Scan(&sym.Name, &kind, &sym.FilePath, &sym.StartLine, &sym.EndLine, &exportName); err != nil {
+			return nil, err
+		}
+		sym.Kind = indexer.SymbolKind(kind)
+		if exportName.Valid {
+			sym.ExportName = exportName.String
+		}
+		symbols = append(symbols, sym)
+	}
+	return symbols, nil
+}
+
+// GetCallersOf finds all symbols that reference the given symbol name via edges.
+func (s *Store) GetCallersOf(symbolName string) ([]indexer.CallerResult, error) {
+	// Find all symbol IDs matching this name
+	rows, err := s.db.Query(`
+		SELECT s.name, s.kind, s.file_path, s.start_line, s.end_line
+		FROM edges e
+		JOIN symbols s ON s.id = e.from_id
+		WHERE e.to_id IN (SELECT id FROM symbols WHERE name = ?)
+		LIMIT 50
+	`, symbolName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []indexer.CallerResult
+	for rows.Next() {
+		var sym indexer.Symbol
+		var kind string
+		if err := rows.Scan(&sym.Name, &kind, &sym.FilePath, &sym.StartLine, &sym.EndLine); err != nil {
+			return nil, err
+		}
+		sym.Kind = indexer.SymbolKind(kind)
+		results = append(results, indexer.CallerResult{
+			Symbol:   sym,
+			CallLine: sym.StartLine,
+		})
+	}
+	return results, nil
+}
+
+// GetSymbolsInFile returns all symbols defined in a given file.
+func (s *Store) GetSymbolsInFile(filePath string) ([]indexer.Symbol, error) {
+	rows, err := s.db.Query(
+		"SELECT name, kind, file_path, start_line, end_line, export_name FROM symbols WHERE file_path = ?",
+		filePath,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var symbols []indexer.Symbol
+	for rows.Next() {
+		var sym indexer.Symbol
+		var kind string
+		var exportName sql.NullString
+		if err := rows.Scan(&sym.Name, &kind, &sym.FilePath, &sym.StartLine, &sym.EndLine, &exportName); err != nil {
+			return nil, err
+		}
+		sym.Kind = indexer.SymbolKind(kind)
+		if exportName.Valid {
+			sym.ExportName = exportName.String
+		}
+		symbols = append(symbols, sym)
+	}
+	return symbols, nil
+}
+
+// GetDependentsOf returns files that import the given file path.
+func (s *Store) GetDependentsOf(filePath string) ([]indexer.DependentResult, error) {
+	rows, err := s.db.Query(
+		"SELECT file_path, specifiers FROM imports WHERE resolved_path = ?",
+		filePath,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	resultsMap := make(map[string][]string)
+	for rows.Next() {
+		var importerPath, specJSON string
+		if err := rows.Scan(&importerPath, &specJSON); err != nil {
+			return nil, err
+		}
+		var specs []string
+		json.Unmarshal([]byte(specJSON), &specs)
+		resultsMap[importerPath] = append(resultsMap[importerPath], specs...)
+	}
+
+	var results []indexer.DependentResult
+	for fp, imports := range resultsMap {
+		results = append(results, indexer.DependentResult{FilePath: fp, Imports: imports})
+	}
+	return results, nil
+}
+
+// HasIndex returns true if the database has indexed data.
+func (s *Store) HasIndex() bool {
+	var count int
+	s.db.QueryRow("SELECT COUNT(*) FROM files").Scan(&count)
+	return count > 0
+}
+
 func (s *Store) GetFileHash(path string) (string, error) {
 	var hash string
 	err := s.db.QueryRow("SELECT hash FROM files WHERE path = ?", path).Scan(&hash)

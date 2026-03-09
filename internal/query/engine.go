@@ -29,10 +29,11 @@ var (
 )
 
 type Engine struct {
-	rootPath  string
-	extractor *indexer.Extractor
-	graph     *graph.DependencyGraph
-	store     *storage.Store
+	rootPath    string
+	extractor   *indexer.Extractor
+	graph       *graph.DependencyGraph
+	store       *storage.Store
+	graphLoaded bool // true after Index() has been called
 }
 
 func NewEngine(rootPath string) (*Engine, error) {
@@ -96,6 +97,7 @@ func (e *Engine) Index() (*IndexResult, error) {
 	}
 
 	e.graph.BuildEdges()
+	e.graphLoaded = true
 
 	// Persist edges to SQLite
 	if err := e.store.SaveEdges(e.graph.Edges()); err != nil {
@@ -160,28 +162,53 @@ func (e *Engine) EnrichForReview(changedFiles []string) (changedSymbols []string
 }
 
 func (e *Engine) Callers(symbolName string) []indexer.CallerResult {
-	return e.graph.GetCallers(symbolName)
+	if e.graphLoaded {
+		return e.graph.GetCallers(symbolName)
+	}
+	// Query from SQLite
+	results, err := e.store.GetCallersOf(symbolName)
+	if err != nil {
+		return nil
+	}
+	return results
 }
 
 func (e *Engine) Dependents(filePath string) []indexer.DependentResult {
 	absPath := filepath.Join(e.rootPath, filePath)
-	return e.graph.GetDependents(absPath)
+	if e.graphLoaded {
+		return e.graph.GetDependents(absPath)
+	}
+	results, err := e.store.GetDependentsOf(absPath)
+	if err != nil {
+		return nil
+	}
+	return results
 }
 
 func (e *Engine) Dependencies(filePath string) []indexer.DependentResult {
-	absPath := filepath.Join(e.rootPath, filePath)
-	return e.graph.GetDependencies(absPath)
+	if e.graphLoaded {
+		absPath := filepath.Join(e.rootPath, filePath)
+		return e.graph.GetDependencies(absPath)
+	}
+	return nil // TODO: add DB read path for dependencies
 }
 
 func (e *Engine) Search(query string) []indexer.Symbol {
-	all := e.graph.AllSymbols()
-	lower := strings.ToLower(query)
-
-	var results []indexer.Symbol
-	for _, sym := range all {
-		if strings.Contains(strings.ToLower(sym.Name), lower) {
-			results = append(results, sym)
+	if e.graphLoaded {
+		all := e.graph.AllSymbols()
+		lower := strings.ToLower(query)
+		var results []indexer.Symbol
+		for _, sym := range all {
+			if strings.Contains(strings.ToLower(sym.Name), lower) {
+				results = append(results, sym)
+			}
 		}
+		return results
+	}
+	// Query from SQLite
+	results, err := e.store.SearchSymbols(query)
+	if err != nil {
+		return nil
 	}
 	return results
 }

@@ -159,11 +159,6 @@ var searchCmd = &cobra.Command{
 		}
 		defer engine.Close()
 
-		// Need to index first to populate the graph
-		if _, err := engine.Index(); err != nil {
-			return err
-		}
-
 		results := engine.Search(args[0])
 		if len(results) == 0 {
 			fmt.Printf("%sNo symbols found matching%s %s%s%s\n", yellow, reset, cyan, args[0], reset)
@@ -198,10 +193,6 @@ var callersCmd = &cobra.Command{
 			return err
 		}
 		defer engine.Close()
-
-		if _, err := engine.Index(); err != nil {
-			return err
-		}
 
 		results := engine.Callers(args[0])
 		if len(results) == 0 {
