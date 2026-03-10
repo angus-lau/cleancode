@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -129,7 +130,19 @@ var reviewCmd = &cobra.Command{
 			baseBranch = cfg.BaseBranch
 		}
 
-		fmt.Printf("%sAssembling context%s ...\n", blue, reset)
+		// Set up output writer — stdout by default, tee to file if --output is set
+		var w io.Writer = os.Stdout
+		outputPath, _ := cmd.Flags().GetString("output")
+		if outputPath != "" {
+			f, err := os.Create(outputPath)
+			if err != nil {
+				return fmt.Errorf("could not create output file: %w", err)
+			}
+			defer f.Close()
+			w = io.MultiWriter(os.Stdout, f)
+		}
+
+		fmt.Fprintf(w, "%sAssembling context%s ...\n", blue, reset)
 		assembler := context.NewAssembler(root)
 		ctx, err := assembler.AssembleDiffContext(baseBranch)
 		if err != nil {
@@ -137,26 +150,26 @@ var reviewCmd = &cobra.Command{
 		}
 
 		if ctx.Diff == "" {
-			fmt.Printf("%sNo changes found.%s\n", yellow, reset)
+			fmt.Fprintf(w, "%sNo changes found.%s\n", yellow, reset)
 			return nil
 		}
 
 		// Enrich with index data
-		fmt.Printf("%sLoading index%s ...\n", blue, reset)
+		fmt.Fprintf(w, "%sLoading index%s ...\n", blue, reset)
 		engine, err := query.NewEngine(root)
 		if err != nil {
-			fmt.Printf("%sWarning: could not load index, reviewing without context: %v%s\n", yellow, err, reset)
+			fmt.Fprintf(w, "%sWarning: could not load index, reviewing without context: %v%s\n", yellow, err, reset)
 		} else {
 			// Re-index to pick up any new changes
 			if _, err := engine.Index(); err != nil {
-				fmt.Printf("%sWarning: indexing failed: %v%s\n", yellow, err, reset)
+				fmt.Fprintf(w, "%sWarning: indexing failed: %v%s\n", yellow, err, reset)
 			} else {
 				absFiles := assembler.ChangedFilesAbsolute(ctx.ChangedFiles)
 				changedSymbols, callers, dependents := engine.EnrichForReview(absFiles)
 				assembler.Enrich(ctx, callers, dependents, changedSymbols)
-				fmt.Printf("  Changed symbols: %d\n", len(changedSymbols))
-				fmt.Printf("  Symbols with callers: %d\n", len(callers))
-				fmt.Printf("  Files with dependents: %d\n", len(dependents))
+				fmt.Fprintf(w, "  Changed symbols: %d\n", len(changedSymbols))
+				fmt.Fprintf(w, "  Symbols with callers: %d\n", len(callers))
+				fmt.Fprintf(w, "  Files with dependents: %d\n", len(dependents))
 			}
 
 			// Load schema and find referenced tables
@@ -169,7 +182,7 @@ var reviewCmd = &cobra.Command{
 						schemaStr += schema.FormatTable(&t) + "\n"
 					}
 					ctx.SchemaContext = schemaStr
-					fmt.Printf("  Referenced tables: %d\n", len(referenced))
+					fmt.Fprintf(w, "  Referenced tables: %d\n", len(referenced))
 				}
 			}
 
@@ -198,7 +211,7 @@ var reviewCmd = &cobra.Command{
 			})
 		}
 
-		fmt.Printf("%sRunning review agents%s ...\n\n", blue, reset)
+		fmt.Fprintf(w, "%sRunning review agents%s ...\n\n", blue, reset)
 		orch := agents.NewOrchestrator(enabledAgents)
 		results := orch.Review(formatted)
 
@@ -208,7 +221,7 @@ var reviewCmd = &cobra.Command{
 		if synthesized {
 			r := results[0]
 			totalFindings = len(r.Findings)
-			fmt.Printf("%s● synthesized%s %s— %d finding(s) (%dms)%s\n", blue, reset, gray, totalFindings, r.Elapsed, reset)
+			fmt.Fprintf(w, "%s● synthesized%s %s— %d finding(s) (%dms)%s\n", blue, reset, gray, totalFindings, r.Elapsed, reset)
 
 			for _, f := range r.Findings {
 				var sevStr string
@@ -226,12 +239,12 @@ var reviewCmd = &cobra.Command{
 					loc = fmt.Sprintf("%s:%d", f.File, f.Line)
 				}
 
-				fmt.Printf("  %s %s%s%s %s[%s]%s\n", sevStr, cyan, loc, reset, gray, f.Agent, reset)
-				fmt.Printf("    %s\n", f.Message)
+				fmt.Fprintf(w, "  %s %s%s%s %s[%s]%s\n", sevStr, cyan, loc, reset, gray, f.Agent, reset)
+				fmt.Fprintf(w, "    %s\n", f.Message)
 				if f.Suggestion != "" {
-					fmt.Printf("    %s→ %s%s\n", gray, f.Suggestion, reset)
+					fmt.Fprintf(w, "    %s→ %s%s\n", gray, f.Suggestion, reset)
 				}
-				fmt.Println()
+				fmt.Fprintln(w)
 			}
 		} else {
 			for _, result := range results {
@@ -239,9 +252,9 @@ var reviewCmd = &cobra.Command{
 				totalFindings += count
 
 				if count == 0 {
-					fmt.Printf("%s✓ %s%s %s(%dms)%s\n", green, result.Agent, reset, gray, result.Elapsed, reset)
+					fmt.Fprintf(w, "%s✓ %s%s %s(%dms)%s\n", green, result.Agent, reset, gray, result.Elapsed, reset)
 				} else {
-					fmt.Printf("%s● %s%s %s— %d finding(s) (%dms)%s\n", yellow, result.Agent, reset, gray, count, result.Elapsed, reset)
+					fmt.Fprintf(w, "%s● %s%s %s— %d finding(s) (%dms)%s\n", yellow, result.Agent, reset, gray, count, result.Elapsed, reset)
 				}
 
 				for _, f := range result.Findings {
@@ -260,22 +273,22 @@ var reviewCmd = &cobra.Command{
 						loc = fmt.Sprintf("%s:%d", f.File, f.Line)
 					}
 
-					fmt.Printf("  %s %s%s%s\n", sevStr, cyan, loc, reset)
-					fmt.Printf("    %s\n", f.Message)
+					fmt.Fprintf(w, "  %s %s%s%s\n", sevStr, cyan, loc, reset)
+					fmt.Fprintf(w, "    %s\n", f.Message)
 					if f.Suggestion != "" {
-						fmt.Printf("    %s→ %s%s\n", gray, f.Suggestion, reset)
+						fmt.Fprintf(w, "    %s→ %s%s\n", gray, f.Suggestion, reset)
 					}
-					fmt.Println()
+					fmt.Fprintln(w)
 				}
 			}
 		}
 
 		if totalFindings == 0 {
-			fmt.Printf("\n%sAll clear! No issues found.%s\n", green, reset)
+			fmt.Fprintf(w, "\n%sAll clear! No issues found.%s\n", green, reset)
 		} else if synthesized {
-			fmt.Printf("\n%s%d finding(s), deduplicated and prioritized.%s\n", yellow, totalFindings, reset)
+			fmt.Fprintf(w, "\n%s%d finding(s), deduplicated and prioritized.%s\n", yellow, totalFindings, reset)
 		} else {
-			fmt.Printf("\n%s%d finding(s) across %d agents.%s\n", yellow, totalFindings, len(results), reset)
+			fmt.Fprintf(w, "\n%s%d finding(s) across %d agents.%s\n", yellow, totalFindings, len(results), reset)
 		}
 
 		return nil
@@ -558,6 +571,7 @@ var watchCmd = &cobra.Command{
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&rootFlag, "root", "r", ".", "Project root directory")
 	reviewCmd.Flags().StringP("base", "b", "", "Base branch to diff against (default from config)")
+	reviewCmd.Flags().StringP("output", "o", "", "Write review output to file (in addition to stdout)")
 	initCmd.Flags().String("db", "", "Database connection string for schema fetching")
 	graphCmd.Flags().StringP("focus", "f", "", "Focus on a file or symbol (shows 2-hop neighborhood)")
 
