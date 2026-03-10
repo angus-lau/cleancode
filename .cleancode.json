@@ -1,7 +1,7 @@
 {
   "baseBranch": "main",
   "agents": {
-    "api-contract": true,
+    "api-contract": false,
     "correctness": true,
     "performance": true,
     "security": false

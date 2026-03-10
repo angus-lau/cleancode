@@ -146,17 +146,29 @@ func FormatForAgent(ctx *ReviewContext) string {
 }
 
 func (a *Assembler) getDiff(baseBranch string) (string, error) {
-	cmd := exec.Command("git", "diff", baseBranch+"...HEAD")
-	cmd.Dir = a.rootPath
-	out, err := cmd.Output()
+	// Find merge-base between baseBranch and HEAD, then diff merge-base against
+	// working tree. This produces one unified diff covering both committed and
+	// uncommitted changes — no duplicate file headers.
+	mergeBaseCmd := exec.Command("git", "merge-base", baseBranch, "HEAD")
+	mergeBaseCmd.Dir = a.rootPath
+	mergeBaseOut, err := mergeBaseCmd.Output()
 	if err != nil {
-		// Fallback to unstaged diff
-		cmd = exec.Command("git", "diff")
+		// No merge base (e.g. unrelated histories) — fall back to uncommitted changes only
+		cmd := exec.Command("git", "diff", "HEAD")
 		cmd.Dir = a.rootPath
-		out, err = cmd.Output()
+		out, err := cmd.Output()
 		if err != nil {
 			return "", err
 		}
+		return string(out), nil
+	}
+
+	mergeBase := strings.TrimSpace(string(mergeBaseOut))
+	cmd := exec.Command("git", "diff", mergeBase)
+	cmd.Dir = a.rootPath
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
 	}
 	return string(out), nil
 }
