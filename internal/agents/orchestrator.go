@@ -80,7 +80,7 @@ IMPORTANT: Return ONLY the JSON array, no other text.
 
 %s`, agent.Prompt, context)
 
-	cmd := exec.Command("claude", "-p", prompt)
+	cmd := exec.Command("claude", "-p", "--model", "claude-opus-4-6", prompt)
 	// Unset CLAUDECODE env var to allow nested invocations
 	cmd.Env = append(os.Environ(), "CLAUDECODE=")
 	output, err := cmd.CombinedOutput()
@@ -188,7 +188,7 @@ Return a JSON array of findings. Each finding must have:
 
 IMPORTANT: Return ONLY the JSON array, no other text.`, string(findingsJSON))
 
-	cmd := exec.Command("claude", "-p", prompt)
+	cmd := exec.Command("claude", "-p", "--model", "claude-haiku-4-5-20251001", prompt)
 	cmd.Env = append(os.Environ(), "CLAUDECODE=")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
