@@ -14,7 +14,7 @@ import (
 )
 
 var (
-	sourcePatterns = []string{"*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs", "*.cjs", "*.py", "*.go"}
+	sourcePatterns = []string{"*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs", "*.cjs", "*.py", "*.go", "*.swift"}
 	ignoreDirs     = map[string]bool{
 		"node_modules":  true,
 		"dist":          true,
@@ -26,6 +26,11 @@ var (
 		"venv":          true,
 		".venv":         true,
 		"vendor":        true,
+		// Swift/Xcode
+		"DerivedData":   true,
+		"Pods":          true,
+		".build":        true,
+		"xcuserdata":    true,
 	}
 )
 

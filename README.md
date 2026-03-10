@@ -30,7 +30,7 @@ Deterministic pre-check that runs before AI agents. Parses SQL and Supabase quer
 4 built-in agents (correctness, performance, api-contract, security) + unlimited custom agents via config. Two-pass architecture: parallel agents → synthesizer deduplication.
 
 ### Indexing
-- 4 languages: TypeScript/JavaScript, Python, Go
+- 5 languages: TypeScript/JavaScript, Python, Go, Swift
 - Class method edge tracking (`Class.method()` calls)
 - DB schema fetching (Postgres/Supabase) → included in review context
 - Configurable ignore patterns
@@ -326,6 +326,7 @@ When 2+ agents produce findings, the synthesizer automatically:
 | JavaScript | `.js`, `.jsx`, `.mjs`, `.cjs` | functions, classes, methods, variables | `import`/`require` |
 | Python | `.py` | functions, classes, methods, decorated functions, variables | `import`/`from...import` |
 | Go | `.go` | functions, methods (with receiver), structs, interfaces, type aliases, var/const | `import` |
+| Swift | `.swift` | classes, structs, enums (with cases), protocols, methods, properties, functions, typealiases, extensions (members prefixed with type name) | `import` |
 
 ## Architecture
 
@@ -339,6 +340,7 @@ internal/
     lang_typescript.go          TS/JS/TSX symbol + import extraction
     lang_python.go              Python symbol + import extraction
     lang_go.go                  Go symbol + import extraction
+    lang_swift.go               Swift symbol + import extraction
     types.go                    Symbol, ImportRef, Edge, FileNode types
 
   graph/graph.go                In-memory dependency graph + edge builder

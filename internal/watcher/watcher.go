@@ -15,12 +15,14 @@ import (
 var sourceExts = map[string]bool{
 	".ts": true, ".tsx": true, ".js": true, ".jsx": true,
 	".mjs": true, ".cjs": true, ".py": true, ".go": true,
+	".swift": true,
 }
 
 var ignoreDirs = map[string]bool{
 	"node_modules": true, "dist": true, "build": true,
 	".git": true, "coverage": true, ".cleancode": true,
 	"__pycache__": true, "venv": true, ".venv": true, "vendor": true,
+	"DerivedData": true, "Pods": true, ".build": true, "xcuserdata": true,
 }
 
 type Watcher struct {

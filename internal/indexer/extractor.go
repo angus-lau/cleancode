@@ -12,6 +12,7 @@ import (
 	"github.com/smacker/go-tree-sitter/golang"
 	"github.com/smacker/go-tree-sitter/javascript"
 	"github.com/smacker/go-tree-sitter/python"
+	"github.com/smacker/go-tree-sitter/swift"
 	"github.com/smacker/go-tree-sitter/typescript/tsx"
 	"github.com/smacker/go-tree-sitter/typescript/typescript"
 )
@@ -64,6 +65,12 @@ func NewExtractor() *Extractor {
 	goP.SetLanguage(golang.GetLanguage())
 	goHandler := &GoHandler{}
 	e.langs[".go"] = &langEntry{parser: goP, handler: goHandler}
+
+	// Swift
+	swiftP := sitter.NewParser()
+	swiftP.SetLanguage(swift.GetLanguage())
+	swiftHandler := &SwiftHandler{}
+	e.langs[".swift"] = &langEntry{parser: swiftP, handler: swiftHandler}
 
 	return e
 }

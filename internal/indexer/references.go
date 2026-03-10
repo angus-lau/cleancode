@@ -74,7 +74,10 @@ func collectIdentifiers(node *sitter.Node, source []byte, importedNames map[stri
 		nodeType == "method_declaration" || nodeType == "method_definition" ||
 		nodeType == "class_declaration" || nodeType == "class_definition" ||
 		nodeType == "variable_declarator" || nodeType == "type_alias_declaration" ||
-		nodeType == "interface_declaration" {
+		nodeType == "interface_declaration" ||
+		// Swift-specific declaration types
+		nodeType == "protocol_declaration" || nodeType == "typealias_declaration" ||
+		nodeType == "property_declaration" || nodeType == "protocol_function_declaration" {
 		// Walk children but skip the "name" field
 		for i := 0; i < int(node.ChildCount()); i++ {
 			child := node.Child(i)
@@ -88,7 +91,7 @@ func collectIdentifiers(node *sitter.Node, source []byte, importedNames map[stri
 	}
 
 	// For identifiers, check if they match an imported name
-	if nodeType == "identifier" || nodeType == "type_identifier" {
+	if nodeType == "identifier" || nodeType == "type_identifier" || nodeType == "simple_identifier" {
 		name := node.Content(source)
 		if importedNames[name] {
 			refs[name] = true
@@ -110,6 +113,30 @@ func collectIdentifiers(node *sitter.Node, source []byte, importedNames map[stri
 				if importedNames[objName] {
 					propName := prop.Content(source)
 					refs[objName+"."+propName] = true
+				}
+			}
+		}
+		return
+	}
+
+	// Swift navigation_expression: Foo.shared, obj.method()
+	// Uses @target and @suffix > navigation_suffix > @suffix fields
+	if nodeType == "navigation_expression" {
+		target := node.ChildByFieldName("target")
+		if target != nil {
+			collectIdentifiers(target, source, importedNames, refs)
+			// Extract the property name from navigation_suffix
+			if suffix := node.ChildByFieldName("suffix"); suffix != nil {
+				if suffix.Type() == "navigation_suffix" {
+					if propNode := suffix.ChildByFieldName("suffix"); propNode != nil {
+						propName := propNode.Content(source)
+						if target.Type() == "simple_identifier" || target.Type() == "type_identifier" || target.Type() == "identifier" {
+							targetName := target.Content(source)
+							if importedNames[targetName] {
+								refs[targetName+"."+propName] = true
+							}
+						}
+					}
 				}
 			}
 		}
