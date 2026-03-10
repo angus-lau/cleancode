@@ -156,6 +156,7 @@ var reviewCmd = &cobra.Command{
 
 		// Enrich with index data
 		fmt.Fprintf(w, "%sLoading index%s ...\n", blue, reset)
+		var dbSchema *schema.DBSchema
 		engine, err := query.NewEngine(root)
 		if err != nil {
 			fmt.Fprintf(w, "%sWarning: could not load index, reviewing without context: %v%s\n", yellow, err, reset)
@@ -173,7 +174,7 @@ var reviewCmd = &cobra.Command{
 			}
 
 			// Load schema and find referenced tables
-			dbSchema, err := schema.LoadFromStore(engine.StoreDB())
+			dbSchema, err = schema.LoadFromStore(engine.StoreDB())
 			if err == nil && dbSchema != nil {
 				referenced := dbSchema.FindReferencedTables(ctx.Diff)
 				if len(referenced) > 0 {
@@ -187,6 +188,26 @@ var reviewCmd = &cobra.Command{
 			}
 
 			engine.Close()
+		}
+
+		// Run deterministic schema validation on the diff
+		var schemaFindings []agents.Finding
+		if dbSchema != nil {
+			validationResults := schema.ValidateDiff(ctx.Diff, dbSchema)
+			if len(validationResults) > 0 {
+				fmt.Fprintf(w, "%sSchema validation: %d issue(s)%s\n", yellow, len(validationResults), reset)
+				for _, v := range validationResults {
+					sev := agents.Critical
+					schemaFindings = append(schemaFindings, agents.Finding{
+						Agent:      "schema-check",
+						Severity:   sev,
+						File:       v.File,
+						Line:       v.Line,
+						Message:    v.Message,
+						Suggestion: v.Suggestion,
+					})
+				}
+			}
 		}
 
 		formatted := context.FormatForAgent(ctx)
@@ -214,6 +235,16 @@ var reviewCmd = &cobra.Command{
 		fmt.Fprintf(w, "%sRunning review agents%s ...\n\n", blue, reset)
 		orch := agents.NewOrchestrator(enabledAgents)
 		results := orch.Review(formatted)
+
+		// Prepend schema-check findings as a separate result
+		if len(schemaFindings) > 0 {
+			schemaResult := agents.ReviewResult{
+				Agent:    "schema-check",
+				Findings: schemaFindings,
+				Elapsed:  0, // deterministic, instant
+			}
+			results = append([]agents.ReviewResult{schemaResult}, results...)
+		}
 
 		totalFindings := 0
 		synthesized := len(results) == 1 && results[0].Agent == "synthesizer"

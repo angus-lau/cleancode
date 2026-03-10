@@ -18,6 +18,14 @@ AI-powered code review CLI with deep codebase understanding. Uses tree-sitter fo
 | `cleancode hook install` | Git pre-push hook for automatic reviews |
 | `cleancode init` | Creates `.cleancode.json` config |
 
+### Schema Validation
+Deterministic pre-check that runs before AI agents. Parses SQL and Supabase queries from your diff, extracts column references, and validates them against the indexed database schema. Catches renamed/dropped columns instantly — no LLM needed.
+
+- Raw SQL: resolves `FROM/JOIN` aliases (e.g., `p.aura` → `posts.aura`) and validates columns
+- Supabase client: validates `.select("col1, col2")`, `.order("col")`, `.gte("col", ...)`, etc.
+- Suggests similar column names via Levenshtein distance (e.g., `"aura" → Did you mean "token_supply"?`)
+- Filters out JS method calls (`posts.map(...)`) and common non-table prefixes
+
 ### Review Agents
 4 built-in agents (correctness, performance, api-contract, security) + unlimited custom agents via config. Two-pass architecture: parallel agents → synthesizer deduplication.
 
@@ -42,6 +50,7 @@ cleancode index    →  Parses your codebase with tree-sitter
 
 cleancode review   →  Diffs against your base branch
                       Enriches diff with callers, dependents, DB schema
+                      Schema validator checks column references (deterministic)
                       Runs parallel review agents via claude -p
                       Synthesizer deduplicates and prioritizes findings
 
@@ -143,9 +152,10 @@ cleancode review --base develop   # diff against specific branch
 - Files that import changed files (dependents)
 - DB schema for tables referenced in the diff
 
-**Two-pass architecture:**
-1. Parallel agents run independently via goroutines
-2. Synthesizer deduplicates findings, resolves conflicts, and prioritizes by impact
+**Three-pass architecture:**
+1. Schema validator checks SQL/Supabase column references against DB schema (deterministic, instant)
+2. Parallel agents run independently via goroutines
+3. Synthesizer deduplicates findings, resolves conflicts, and prioritizes by impact
 
 ### `cleancode explain <symbol>`
 
@@ -294,12 +304,13 @@ Add any number of custom review agents. They run alongside built-in agents and g
 
 | Agent | Default | What it checks |
 |-------|---------|----------------|
+| `schema-check` | on (auto) | Deterministic column validation — no LLM, runs before agents |
 | `correctness` | on | Logic bugs, null safety, type mismatches, missing error handling |
 | `performance` | on | N+1 queries, sequential awaits, unbounded queries, memory leaks |
 | `api-contract` | on | Breaking changes, removed fields, changed signatures |
 | `security` | off | SQL injection, auth bypass, secrets in code, OWASP top 10 |
 
-### Synthesizer (pass 2)
+### Synthesizer (pass 3)
 
 When 2+ agents produce findings, the synthesizer automatically:
 - Deduplicates overlapping findings
@@ -344,6 +355,7 @@ internal/
   schema/
     fetcher.go                  Postgres schema introspection
     store.go                    Schema SQLite persistence
+    validator.go                Deterministic SQL/Supabase column validation against DB schema
   watcher/watcher.go            fsnotify file watcher
 ```
 
