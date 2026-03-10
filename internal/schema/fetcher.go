@@ -28,6 +28,15 @@ type DBSchema struct {
 
 // Fetch connects to the database and retrieves the public schema.
 func Fetch(connStr string) (*DBSchema, error) {
+	// Ensure connection timeout
+	if !strings.Contains(connStr, "connect_timeout") {
+		sep := "?"
+		if strings.Contains(connStr, "?") {
+			sep = "&"
+		}
+		connStr += sep + "connect_timeout=10"
+	}
+
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to database: %w", err)
@@ -38,26 +47,20 @@ func Fetch(connStr string) (*DBSchema, error) {
 		return nil, fmt.Errorf("pinging database: %w", err)
 	}
 
-	// Get all columns
+	// Set a generous statement timeout for information_schema queries
+	db.Exec("SET statement_timeout = '30s'")
+
+	// Get all columns — simple query without PK join for speed on pooled connections
 	rows, err := db.Query(`
 		SELECT
-			c.table_name,
-			c.column_name,
-			c.data_type,
-			c.is_nullable,
-			COALESCE(c.column_default, ''),
-			CASE WHEN pk.column_name IS NOT NULL THEN true ELSE false END as is_primary
-		FROM information_schema.columns c
-		LEFT JOIN (
-			SELECT ku.table_name, ku.column_name
-			FROM information_schema.table_constraints tc
-			JOIN information_schema.key_column_usage ku
-				ON tc.constraint_name = ku.constraint_name
-			WHERE tc.constraint_type = 'PRIMARY KEY'
-				AND tc.table_schema = 'public'
-		) pk ON c.table_name = pk.table_name AND c.column_name = pk.column_name
-		WHERE c.table_schema = 'public'
-		ORDER BY c.table_name, c.ordinal_position
+			table_name,
+			column_name,
+			data_type,
+			is_nullable,
+			COALESCE(column_default, '')
+		FROM information_schema.columns
+		WHERE table_schema = 'public'
+		ORDER BY table_name, ordinal_position
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("querying schema: %w", err)
@@ -69,9 +72,8 @@ func Fetch(connStr string) (*DBSchema, error) {
 
 	for rows.Next() {
 		var tableName, colName, dataType, isNullable, colDefault string
-		var isPrimary bool
 
-		if err := rows.Scan(&tableName, &colName, &dataType, &isNullable, &colDefault, &isPrimary); err != nil {
+		if err := rows.Scan(&tableName, &colName, &dataType, &isNullable, &colDefault); err != nil {
 			return nil, err
 		}
 
@@ -84,7 +86,6 @@ func Fetch(connStr string) (*DBSchema, error) {
 			Name:       colName,
 			DataType:   dataType,
 			IsNullable: isNullable == "YES",
-			IsPrimary:  isPrimary,
 			Default:    colDefault,
 		})
 	}

@@ -201,15 +201,15 @@ func (s *Store) SearchSymbols(query string) ([]indexer.Symbol, error) {
 }
 
 // GetCallersOf finds all symbols that reference the given symbol name via edges.
+// Also matches method names (e.g. "batchGetFollowStates" matches "FollowService.batchGetFollowStates").
 func (s *Store) GetCallersOf(symbolName string) ([]indexer.CallerResult, error) {
-	// Find all symbol IDs matching this name
 	rows, err := s.db.Query(`
 		SELECT s.name, s.kind, s.file_path, s.start_line, s.end_line
 		FROM edges e
 		JOIN symbols s ON s.id = e.from_id
-		WHERE e.to_id IN (SELECT id FROM symbols WHERE name = ?)
+		WHERE e.to_id IN (SELECT id FROM symbols WHERE name = ? OR (kind = 'method' AND name LIKE '%.' || ?))
 		LIMIT 50
-	`, symbolName)
+	`, symbolName, symbolName)
 	if err != nil {
 		return nil, err
 	}

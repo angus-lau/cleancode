@@ -96,10 +96,22 @@ func collectIdentifiers(node *sitter.Node, source []byte, importedNames map[stri
 		return
 	}
 
-	// For member expressions like `foo.bar()`, only check the object part
+	// For member expressions like `foo.bar()`, check the object AND record
+	// the combined "Object.property" so we can match class method symbols.
 	if nodeType == "member_expression" || nodeType == "member_access_expression" {
-		if obj := node.ChildByFieldName("object"); obj != nil {
+		obj := node.ChildByFieldName("object")
+		prop := node.ChildByFieldName("property")
+		if obj != nil {
 			collectIdentifiers(obj, source, importedNames, refs)
+			// If the object is an imported name, also record "Object.property"
+			// so we can create edges to class method symbols like "FollowService.batchGetFollowStates"
+			if prop != nil && (obj.Type() == "identifier" || obj.Type() == "type_identifier") {
+				objName := obj.Content(source)
+				if importedNames[objName] {
+					propName := prop.Content(source)
+					refs[objName+"."+propName] = true
+				}
+			}
 		}
 		return
 	}

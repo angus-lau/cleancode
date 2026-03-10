@@ -56,12 +56,18 @@ func (g *DependencyGraph) BuildEdges() {
 			g.importerIndex[resolved][filePath] = true
 
 			// Build a lookup of specifier -> target symbol ID for this import
+			// Also index "Class.method" style references to method symbols
 			specToTarget := make(map[string]string)
 			for _, spec := range imp.Specifiers {
 				for id, sym := range g.symbolIndex {
 					if sym.FilePath == resolved && sym.Name == spec {
 						specToTarget[spec] = id
-						break
+					}
+					// Also map "Class.method" references to method symbols
+					// Method symbols are stored as "ClassName.methodName"
+					if sym.FilePath == resolved && sym.Kind == indexer.Method &&
+						strings.HasPrefix(sym.Name, spec+".") {
+						specToTarget[sym.Name] = id
 					}
 				}
 			}
@@ -88,21 +94,22 @@ func (g *DependencyGraph) BuildEdges() {
 }
 
 func (g *DependencyGraph) GetCallers(symbolName string) []indexer.CallerResult {
-	// Find the target symbol
-	var targetID string
+	// Find all target symbol IDs matching this name.
+	// Match both exact name and method names (e.g. "batchGetFollowStates"
+	// matches "FollowService.batchGetFollowStates").
+	targetIDs := make(map[string]bool)
 	for id, sym := range g.symbolIndex {
-		if sym.Name == symbolName {
-			targetID = id
-			break
+		if sym.Name == symbolName || (sym.Kind == indexer.Method && strings.HasSuffix(sym.Name, "."+symbolName)) {
+			targetIDs[id] = true
 		}
 	}
-	if targetID == "" {
+	if len(targetIDs) == 0 {
 		return nil
 	}
 
 	var results []indexer.CallerResult
 	for _, edge := range g.edges {
-		if edge.To == targetID {
+		if targetIDs[edge.To] {
 			if callerSym, ok := g.symbolIndex[edge.From]; ok {
 				results = append(results, indexer.CallerResult{
 					Symbol:   callerSym,

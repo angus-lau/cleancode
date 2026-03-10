@@ -1,4 +1,5 @@
 .cleancode/
+.cleancode.json
 /cleancode
 *.exe
 .env
