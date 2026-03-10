@@ -92,7 +92,9 @@ Parses the codebase, builds the dependency graph, and stores it in SQLite. Incre
 cleancode index
 ```
 
-If a database URL is configured, also fetches and stores the DB schema.
+If a database URL is configured, also fetches and stores the DB schema (table names, columns, types, nullability, defaults). Schema is persisted in SQLite so subsequent reviews use it without re-fetching.
+
+**Supabase note:** Use the session mode pooler URL (port 5432 with `postgres.{project_ref}` username), not the transaction mode pooler (port 6543) which times out on `information_schema` queries.
 
 ### `cleancode review`
 
@@ -233,7 +235,7 @@ cleancode hook remove
 | `agents` | Toggle built-in review agents on/off |
 | `customAgents` | Define your own review agents with custom prompts |
 | `schema.provider` | Database type (`postgres`) |
-| `schema.url` | Connection string. Prefix with `$` to read from env var |
+| `schema.url` | Connection string (direct or `$ENV_VAR`). For Supabase, use session mode pooler on port 5432 |
 | `ignore` | Glob patterns for files to skip during indexing |
 
 ### Custom agents
@@ -320,9 +322,10 @@ internal/
 2. For each source file, compute content hash — skip if unchanged since last index
 3. Parse with tree-sitter, extract symbols and imports via language-specific handlers
 4. Walk each symbol's AST subtree to find which imported names are actually referenced (call-site tracking)
-5. Resolve import paths (e.g., `./utils` → `/project/src/utils.ts`)
-6. Build dependency edges: symbol A → symbol B only if A's body actually references B
-7. Persist everything to SQLite (files, symbols, imports with resolved paths, edges)
+5. For class method calls (e.g., `FollowService.batchGetFollowStates()`), track both the class reference and the `Class.method` compound reference
+6. Resolve import paths (e.g., `./utils` → `/project/src/utils.ts`)
+7. Build dependency edges: symbol A → symbol B only if A's body actually references B (includes class method edges)
+8. Persist everything to SQLite (files, symbols, imports with resolved paths, edges)
 
 ## Global flags
 
