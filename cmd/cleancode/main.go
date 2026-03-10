@@ -12,6 +12,7 @@ import (
 	"github.com/angus-lau/cleancode/internal/context"
 	"github.com/angus-lau/cleancode/internal/query"
 	"github.com/angus-lau/cleancode/internal/schema"
+	"github.com/angus-lau/cleancode/internal/visualizer"
 	"github.com/angus-lau/cleancode/internal/watcher"
 	"github.com/spf13/cobra"
 )
@@ -402,6 +403,36 @@ var hookCmd = &cobra.Command{
 	},
 }
 
+var graphCmd = &cobra.Command{
+	Use:   "graph",
+	Short: "Open an interactive dependency graph in the browser",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		root, _ := filepath.Abs(rootFlag)
+
+		engine, err := query.NewEngine(root)
+		if err != nil {
+			return err
+		}
+		defer engine.Close()
+
+		focus, _ := cmd.Flags().GetString("focus")
+
+		fmt.Printf("%sLoading graph data%s ...\n", blue, reset)
+		symbols, edges, err := engine.GraphData()
+		if err != nil {
+			return err
+		}
+
+		if focus != "" {
+			fmt.Printf("  Focused on: %s (2 hops)\n", focus)
+		}
+		fmt.Printf("  %d symbols, %d edges\n", len(symbols), len(edges))
+		fmt.Printf("%sOpening in browser%s ...\n", blue, reset)
+
+		return visualizer.GenerateHTML(symbols, edges, root, focus)
+	},
+}
+
 var explainCmd = &cobra.Command{
 	Use:   "explain <symbol>",
 	Short: "AI-powered explanation of a symbol with full codebase context",
@@ -528,8 +559,9 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&rootFlag, "root", "r", ".", "Project root directory")
 	reviewCmd.Flags().StringP("base", "b", "", "Base branch to diff against (default from config)")
 	initCmd.Flags().String("db", "", "Database connection string for schema fetching")
+	graphCmd.Flags().StringP("focus", "f", "", "Focus on a file or symbol (shows 2-hop neighborhood)")
 
-	rootCmd.AddCommand(initCmd, indexCmd, reviewCmd, searchCmd, callersCmd, statsCmd, hookCmd, watchCmd, explainCmd)
+	rootCmd.AddCommand(initCmd, indexCmd, reviewCmd, searchCmd, callersCmd, statsCmd, hookCmd, watchCmd, explainCmd, graphCmd)
 }
 
 func main() {

@@ -312,6 +312,46 @@ func (s *Store) Stats() (indexer.IndexStats, error) {
 	return stats, nil
 }
 
+// AllSymbols returns every symbol in the index.
+func (s *Store) AllSymbols() ([]indexer.Symbol, error) {
+	rows, err := s.db.Query("SELECT name, kind, file_path, start_line, end_line FROM symbols")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var symbols []indexer.Symbol
+	for rows.Next() {
+		var sym indexer.Symbol
+		var kind string
+		if err := rows.Scan(&sym.Name, &kind, &sym.FilePath, &sym.StartLine, &sym.EndLine); err != nil {
+			return nil, err
+		}
+		sym.Kind = indexer.SymbolKind(kind)
+		symbols = append(symbols, sym)
+	}
+	return symbols, nil
+}
+
+// AllEdges returns every edge in the index.
+func (s *Store) AllEdges() ([]indexer.Edge, error) {
+	rows, err := s.db.Query("SELECT from_id, to_id, type FROM edges")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var edges []indexer.Edge
+	for rows.Next() {
+		var e indexer.Edge
+		if err := rows.Scan(&e.From, &e.To, &e.Type); err != nil {
+			return nil, err
+		}
+		edges = append(edges, e)
+	}
+	return edges, nil
+}
+
 // DB returns the underlying database handle for use by other packages.
 func (s *Store) DB() *sql.DB {
 	return s.db

@@ -283,6 +283,19 @@ func (e *Engine) GetSymbolContext(symbolName string) (*SymbolContext, error) {
 	}, nil
 }
 
+// GraphData returns all symbols and edges for visualization.
+func (e *Engine) GraphData() ([]indexer.Symbol, []indexer.Edge, error) {
+	symbols, err := e.store.AllSymbols()
+	if err != nil {
+		return nil, nil, err
+	}
+	edges, err := e.store.AllEdges()
+	if err != nil {
+		return nil, nil, err
+	}
+	return symbols, edges, nil
+}
+
 func (e *Engine) Stats() (indexer.IndexStats, error) {
 	return e.store.Stats()
 }

@@ -13,6 +13,10 @@ cleancode review   →  Diffs against your base branch
                       Enriches diff with callers, dependents, DB schema
                       Runs parallel review agents via claude -p
                       Synthesizer deduplicates and prioritizes findings
+
+cleancode graph    →  Interactive dependency graph in the browser
+                      Files clustered by directory, colored by group
+                      Click to explore symbols, imports, dependents
 ```
 
 ## Install
@@ -152,6 +156,25 @@ cleancode stats
 #   Edges:   4491
 ```
 
+### `cleancode graph`
+
+Opens an interactive dependency graph in the browser. File-level view with nodes colored by directory, clustered by top-level folder.
+
+```bash
+cleancode graph                           # full graph
+cleancode graph --focus service.ts        # focus on a file (2-hop neighborhood)
+cleancode graph --focus handleLogin       # focus on a symbol's file
+```
+
+**Features:**
+- Nodes sized by connection count, colored by directory
+- Directory clusters with labels and dashed outlines
+- Click a node to see its symbols, imports, and dependents in a sidebar
+- Click connections in sidebar to navigate to that file
+- Search by file name or symbol name (press `/` to focus)
+- Zoom, pan, drag nodes
+- Click background to reset view
+
 ### `cleancode watch`
 
 Watches for file changes and re-indexes automatically. Uses fsnotify with 500ms debounce.
@@ -284,6 +307,7 @@ internal/
     presets.go                  Built-in agent prompts
     types.go                    Finding, ReviewResult types
   config/config.go              .cleancode.json loading/saving
+  visualizer/graph.go           Interactive D3.js dependency graph
   schema/
     fetcher.go                  Postgres schema introspection
     store.go                    Schema SQLite persistence
