@@ -2,6 +2,37 @@
 
 AI-powered code review CLI with deep codebase understanding. Uses tree-sitter for structural analysis, SQLite for persistent indexing, and Claude for intelligent review.
 
+## Features
+
+### Core
+| Command | What it does |
+|---------|-------------|
+| `cleancode index` | Tree-sitter parse → symbols, imports, edges → SQLite. Incremental by content hash. |
+| `cleancode review` | Diff → enrich with callers/dependents/schema → parallel agents → synthesizer dedup |
+| `cleancode search <query>` | Fuzzy symbol search across the index |
+| `cleancode callers <symbol>` | Find all call sites (functions + class methods like `FollowService.batchGetFollowStates`) |
+| `cleancode explain <symbol>` | AI-powered explanation with source, callers, dependents, schema context |
+| `cleancode graph` | Interactive D3.js dependency graph in browser (directory clusters, focus mode, search) |
+| `cleancode watch` | fsnotify auto re-index on file save |
+| `cleancode stats` | File/symbol/edge counts |
+| `cleancode hook install` | Git pre-push hook for automatic reviews |
+| `cleancode init` | Creates `.cleancode.json` config |
+
+### Review Agents
+4 built-in agents (correctness, performance, api-contract, security) + unlimited custom agents via config. Two-pass architecture: parallel agents → synthesizer deduplication.
+
+### Indexing
+- 4 languages: TypeScript/JavaScript, Python, Go
+- Class method edge tracking (`Class.method()` calls)
+- DB schema fetching (Postgres/Supabase) → included in review context
+- Configurable ignore patterns
+
+### Graph Visualization
+- File-level nodes colored by directory cluster with convex hull outlines
+- Click node → sidebar with symbols, imports, dependents
+- `--focus` flag for 2-hop neighborhood filtering
+- Search by file or symbol name
+
 ## How it works
 
 ```
