@@ -76,6 +76,43 @@ func (s *Store) initSchema() error {
 	return err
 }
 
+// PruneDeletedFiles removes files from the index that no longer exist on disk.
+// Symbols and imports cascade-delete via foreign keys.
+func (s *Store) PruneDeletedFiles(currentFiles map[string]bool) (int, error) {
+	rows, err := s.db.Query("SELECT path FROM files")
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var stale []string
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return 0, err
+		}
+		if !currentFiles[path] {
+			stale = append(stale, path)
+		}
+	}
+
+	if len(stale) == 0 {
+		return 0, nil
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	for _, path := range stale {
+		tx.Exec("DELETE FROM files WHERE path = ?", path)
+	}
+
+	return len(stale), tx.Commit()
+}
+
 func (s *Store) SaveFile(file *indexer.FileNode) error {
 	tx, err := s.db.Begin()
 	if err != nil {

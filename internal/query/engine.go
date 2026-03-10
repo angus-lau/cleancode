@@ -71,6 +71,17 @@ func (e *Engine) Index() (*IndexResult, error) {
 		return nil, err
 	}
 
+	// Prune files that no longer exist on disk
+	currentFiles := make(map[string]bool, len(files))
+	for _, f := range files {
+		currentFiles[f] = true
+	}
+	if pruned, err := e.store.PruneDeletedFiles(currentFiles); err != nil {
+		return nil, fmt.Errorf("pruning deleted files: %w", err)
+	} else if pruned > 0 {
+		fmt.Printf("  Pruned %d deleted file(s) from index\n", pruned)
+	}
+
 	symbolCount := 0
 	for _, filePath := range files {
 		hash, err := e.store.GetFileHash(filePath)
