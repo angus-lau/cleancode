@@ -82,23 +82,33 @@ func (e *Engine) Index() (*IndexResult, error) {
 		fmt.Printf("  Pruned %d deleted file(s) from index\n", pruned)
 	}
 
+	// Bulk-load all stored hashes in one query (avoids N+1)
+	storedHashes, err := e.store.GetAllFileHashes()
+	if err != nil {
+		return nil, fmt.Errorf("loading file hashes: %w", err)
+	}
+
 	symbolCount := 0
 	for _, filePath := range files {
-		hash, err := e.store.GetFileHash(filePath)
+		// Cheap hash check: compute MD5 without tree-sitter parsing
+		currentHash, err := indexer.FileHash(filePath)
 		if err != nil {
-			return nil, err
+			continue // Skip unreadable files
+		}
+
+		// Unchanged file: load from SQLite instead of re-parsing
+		if storedHashes[filePath] == currentHash {
+			cached, err := e.store.LoadFile(filePath)
+			if err == nil {
+				e.graph.AddFile(cached)
+				continue
+			}
+			// If load fails, fall through to re-parse
 		}
 
 		fileNode, err := e.extractor.ParseFile(filePath)
 		if err != nil {
 			continue // Skip unparseable files
-		}
-
-		// Skip unchanged files
-		if hash == fileNode.Hash {
-			// Still add to graph for edge building
-			e.graph.AddFile(fileNode)
-			continue
 		}
 
 		e.graph.AddFile(fileNode)

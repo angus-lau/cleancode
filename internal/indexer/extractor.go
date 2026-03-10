@@ -68,6 +68,15 @@ func NewExtractor() *Extractor {
 	return e
 }
 
+// FileHash computes the content hash of a file without parsing it.
+func FileHash(filePath string) (string, error) {
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", md5.Sum(content)), nil
+}
+
 func (e *Extractor) ParseFile(filePath string) (*FileNode, error) {
 	ext := strings.ToLower(filepath.Ext(filePath))
 	entry, ok := e.langs[ext]

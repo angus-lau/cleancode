@@ -113,6 +113,81 @@ func (s *Store) PruneDeletedFiles(currentFiles map[string]bool) (int, error) {
 	return len(stale), tx.Commit()
 }
 
+// LoadFile reconstructs a FileNode from the SQLite index (symbols + imports).
+func (s *Store) LoadFile(path string) (*indexer.FileNode, error) {
+	var hash string
+	var lastMod int64
+	err := s.db.QueryRow("SELECT hash, last_modified FROM files WHERE path = ?", path).Scan(&hash, &lastMod)
+	if err != nil {
+		return nil, err
+	}
+
+	// Load symbols
+	symRows, err := s.db.Query(
+		"SELECT name, kind, file_path, start_line, end_line, export_name FROM symbols WHERE file_path = ?", path)
+	if err != nil {
+		return nil, err
+	}
+	defer symRows.Close()
+
+	var symbols []indexer.Symbol
+	for symRows.Next() {
+		var sym indexer.Symbol
+		var kind string
+		var exportName sql.NullString
+		if err := symRows.Scan(&sym.Name, &kind, &sym.FilePath, &sym.StartLine, &sym.EndLine, &exportName); err != nil {
+			return nil, err
+		}
+		sym.Kind = indexer.SymbolKind(kind)
+		if exportName.Valid {
+			sym.ExportName = exportName.String
+		}
+		symbols = append(symbols, sym)
+	}
+	if err := symRows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Load imports
+	impRows, err := s.db.Query(
+		"SELECT source, specifiers, is_default, is_namespace, resolved_path FROM imports WHERE file_path = ?", path)
+	if err != nil {
+		return nil, err
+	}
+	defer impRows.Close()
+
+	var imports []indexer.ImportRef
+	for impRows.Next() {
+		var imp indexer.ImportRef
+		var specJSON string
+		var isDefault, isNamespace int
+		var resolvedPath sql.NullString
+		if err := impRows.Scan(&imp.Source, &specJSON, &isDefault, &isNamespace, &resolvedPath); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(specJSON), &imp.Specifiers); err != nil {
+			return nil, fmt.Errorf("unmarshal specifiers for %s: %w", path, err)
+		}
+		imp.IsDefault = isDefault == 1
+		imp.IsNamespace = isNamespace == 1
+		if resolvedPath.Valid {
+			imp.ResolvedPath = resolvedPath.String
+		}
+		imports = append(imports, imp)
+	}
+	if err := impRows.Err(); err != nil {
+		return nil, err
+	}
+
+	return &indexer.FileNode{
+		Path:         path,
+		Symbols:      symbols,
+		Imports:      imports,
+		LastModified: lastMod,
+		Hash:         hash,
+	}, nil
+}
+
 func (s *Store) SaveFile(file *indexer.FileNode) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -339,6 +414,25 @@ func (s *Store) GetFileHash(path string) (string, error) {
 		return "", nil
 	}
 	return hash, err
+}
+
+// GetAllFileHashes returns a map of path -> content hash for all indexed files.
+func (s *Store) GetAllFileHashes() (map[string]string, error) {
+	rows, err := s.db.Query("SELECT path, hash FROM files")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	hashes := make(map[string]string)
+	for rows.Next() {
+		var path, hash string
+		if err := rows.Scan(&path, &hash); err != nil {
+			return nil, err
+		}
+		hashes[path] = hash
+	}
+	return hashes, rows.Err()
 }
 
 func (s *Store) Stats() (indexer.IndexStats, error) {
