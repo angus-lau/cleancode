@@ -48,7 +48,8 @@ func (s *Store) initSchema() error {
 			file_path TEXT NOT NULL REFERENCES files(path) ON DELETE CASCADE,
 			start_line INTEGER NOT NULL,
 			end_line INTEGER NOT NULL,
-			export_name TEXT
+			export_name TEXT,
+			refs TEXT
 		);
 
 		CREATE TABLE IF NOT EXISTS imports (
@@ -124,7 +125,7 @@ func (s *Store) LoadFile(path string) (*indexer.FileNode, error) {
 
 	// Load symbols
 	symRows, err := s.db.Query(
-		"SELECT name, kind, file_path, start_line, end_line, export_name FROM symbols WHERE file_path = ?", path)
+		"SELECT name, kind, file_path, start_line, end_line, export_name, refs FROM symbols WHERE file_path = ?", path)
 	if err != nil {
 		return nil, err
 	}
@@ -134,13 +135,16 @@ func (s *Store) LoadFile(path string) (*indexer.FileNode, error) {
 	for symRows.Next() {
 		var sym indexer.Symbol
 		var kind string
-		var exportName sql.NullString
-		if err := symRows.Scan(&sym.Name, &kind, &sym.FilePath, &sym.StartLine, &sym.EndLine, &exportName); err != nil {
+		var exportName, refsJSON sql.NullString
+		if err := symRows.Scan(&sym.Name, &kind, &sym.FilePath, &sym.StartLine, &sym.EndLine, &exportName, &refsJSON); err != nil {
 			return nil, err
 		}
 		sym.Kind = indexer.SymbolKind(kind)
 		if exportName.Valid {
 			sym.ExportName = exportName.String
+		}
+		if refsJSON.Valid && refsJSON.String != "" {
+			json.Unmarshal([]byte(refsJSON.String), &sym.References)
 		}
 		symbols = append(symbols, sym)
 	}
@@ -213,8 +217,14 @@ func (s *Store) SaveFile(file *indexer.FileNode) error {
 		if sym.ExportName != "" {
 			exportName = &sym.ExportName
 		}
-		_, err = tx.Exec("INSERT INTO symbols (id, name, kind, file_path, start_line, end_line, export_name) VALUES (?, ?, ?, ?, ?, ?, ?)",
-			id, sym.Name, string(sym.Kind), file.Path, sym.StartLine, sym.EndLine, exportName)
+		var refsJSON *string
+		if len(sym.References) > 0 {
+			b, _ := json.Marshal(sym.References)
+			s := string(b)
+			refsJSON = &s
+		}
+		_, err = tx.Exec("INSERT INTO symbols (id, name, kind, file_path, start_line, end_line, export_name, refs) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+			id, sym.Name, string(sym.Kind), file.Path, sym.StartLine, sym.EndLine, exportName, refsJSON)
 		if err != nil {
 			return err
 		}
