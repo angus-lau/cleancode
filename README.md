@@ -2,7 +2,7 @@
 
 Code review CLI with deep codebase understanding. Uses tree-sitter for structural analysis, SQLite for persistent indexing, and Claude for intelligent review.
 
-video src="https://github.com/user-attachments/assets/86ef8e78-fecc-4804-a94e-879e9f13c536" controls></video>
+<video src="https://github.com/user-attachments/assets/86ef8e78-fecc-4804-a94e-879e9f13c536" controls></video>
 
 ## Features
 
