@@ -53,10 +53,23 @@ func NewEngine(rootPath string) (*Engine, error) {
 		return nil, err
 	}
 
+	g := graph.New()
+
+	// Detect Go module for import resolution
+	if content, err := os.ReadFile(filepath.Join(absRoot, "go.mod")); err == nil {
+		for _, line := range strings.Split(string(content), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "module ") {
+				g.SetGoModule(strings.TrimSpace(strings.TrimPrefix(line, "module ")), absRoot)
+				break
+			}
+		}
+	}
+
 	return &Engine{
 		rootPath:  absRoot,
 		extractor: indexer.NewExtractor(),
-		graph:     graph.New(),
+		graph:     g,
 		store:     store,
 	}, nil
 }

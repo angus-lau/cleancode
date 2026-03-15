@@ -16,6 +16,8 @@ type DependencyGraph struct {
 	symbolIndex   map[string]indexer.Symbol  // "filePath:name" -> Symbol
 	importerIndex map[string]map[string]bool // filePath -> set of importer filePaths
 	edges         []indexer.Edge
+	goModulePath  string // Go module path from go.mod (e.g., "github.com/foo/bar")
+	goModuleRoot  string // Absolute path to go.mod directory
 }
 
 func New() *DependencyGraph {
@@ -24,6 +26,11 @@ func New() *DependencyGraph {
 		symbolIndex:   make(map[string]indexer.Symbol),
 		importerIndex: make(map[string]map[string]bool),
 	}
+}
+
+func (g *DependencyGraph) SetGoModule(modulePath, moduleRoot string) {
+	g.goModulePath = modulePath
+	g.goModuleRoot = moduleRoot
 }
 
 func (g *DependencyGraph) AddFile(file *indexer.FileNode) {
@@ -41,7 +48,7 @@ func (g *DependencyGraph) BuildEdges() {
 	for filePath, file := range g.files {
 		for i := range file.Imports {
 			imp := &file.Imports[i]
-			resolved := resolveImport(imp.Source, filePath)
+			resolved := g.resolveImport(imp.Source, filePath)
 			if resolved == "" {
 				continue
 			}
@@ -49,25 +56,52 @@ func (g *DependencyGraph) BuildEdges() {
 			// Persist the resolved path back onto the ImportRef
 			imp.ResolvedPath = resolved
 
-			// Track file-level import relationship
-			if g.importerIndex[resolved] == nil {
-				g.importerIndex[resolved] = make(map[string]bool)
+			// Check if resolved is a directory (Go package)
+			isDir := false
+			if info, err := os.Stat(resolved); err == nil && info.IsDir() {
+				isDir = true
 			}
-			g.importerIndex[resolved][filePath] = true
+
+			// Track file-level import relationship
+			if isDir {
+				// Go package: register each indexed file in the directory as imported
+				for path := range g.files {
+					if strings.HasPrefix(path, resolved+string(filepath.Separator)) {
+						if g.importerIndex[path] == nil {
+							g.importerIndex[path] = make(map[string]bool)
+						}
+						g.importerIndex[path][filePath] = true
+					}
+				}
+			} else {
+				if g.importerIndex[resolved] == nil {
+					g.importerIndex[resolved] = make(map[string]bool)
+				}
+				g.importerIndex[resolved][filePath] = true
+			}
 
 			// Build a lookup of specifier -> target symbol ID for this import
 			// Also index "Class.method" style references to method symbols
 			specToTarget := make(map[string]string)
 			for _, spec := range imp.Specifiers {
 				for id, sym := range g.symbolIndex {
-					if sym.FilePath == resolved && sym.Name == spec {
-						specToTarget[spec] = id
-					}
-					// Also map "Class.method" references to method symbols
-					// Method symbols are stored as "ClassName.methodName"
-					if sym.FilePath == resolved && sym.Kind == indexer.Method &&
-						strings.HasPrefix(sym.Name, spec+".") {
-						specToTarget[sym.Name] = id
+					if isDir {
+						// Go package: match symbols in files under the resolved directory.
+						// References are "pkg.Symbol" (e.g., "indexer.ParseFile").
+						if !strings.HasPrefix(sym.FilePath, resolved+string(filepath.Separator)) {
+							continue
+						}
+						specToTarget[spec+"."+sym.Name] = id
+					} else {
+						if sym.FilePath == resolved && sym.Name == spec {
+							specToTarget[spec] = id
+						}
+						// Also map "Class.method" references to method symbols
+						// Method symbols are stored as "ClassName.methodName"
+						if sym.FilePath == resolved && sym.Kind == indexer.Method &&
+							strings.HasPrefix(sym.Name, spec+".") {
+							specToTarget[sym.Name] = id
+						}
 					}
 				}
 			}
@@ -136,8 +170,8 @@ func (g *DependencyGraph) GetDependents(filePath string) []indexer.DependentResu
 
 		var relevantSpecifiers []string
 		for _, imp := range file.Imports {
-			resolved := resolveImport(imp.Source, importerPath)
-			if resolved == filePath {
+			resolved := g.resolveImport(imp.Source, importerPath)
+			if resolved == filePath || strings.HasPrefix(filePath, resolved+string(filepath.Separator)) {
 				relevantSpecifiers = append(relevantSpecifiers, imp.Specifiers...)
 			}
 		}
@@ -158,13 +192,25 @@ func (g *DependencyGraph) GetDependencies(filePath string) []indexer.DependentRe
 
 	var results []indexer.DependentResult
 	for _, imp := range file.Imports {
-		resolved := resolveImport(imp.Source, filePath)
-		if resolved != "" {
-			if _, exists := g.files[resolved]; exists {
-				results = append(results, indexer.DependentResult{
-					FilePath: resolved,
-					Imports:  imp.Specifiers,
-				})
+		resolved := g.resolveImport(imp.Source, filePath)
+		if resolved == "" {
+			continue
+		}
+		if _, exists := g.files[resolved]; exists {
+			results = append(results, indexer.DependentResult{
+				FilePath: resolved,
+				Imports:  imp.Specifiers,
+			})
+		} else {
+			// Go package directory: check if any indexed file is inside
+			for path := range g.files {
+				if strings.HasPrefix(path, resolved+string(filepath.Separator)) {
+					results = append(results, indexer.DependentResult{
+						FilePath: resolved,
+						Imports:  imp.Specifiers,
+					})
+					break
+				}
 			}
 		}
 	}
@@ -215,8 +261,17 @@ func (g *DependencyGraph) Stats() indexer.IndexStats {
 	}
 }
 
-func resolveImport(source, fromFile string) string {
-	// Skip bare specifiers (node_modules)
+func (g *DependencyGraph) resolveImport(source, fromFile string) string {
+	// Go module path resolution: map module imports to local directories
+	if g.goModulePath != "" && strings.HasPrefix(source, g.goModulePath+"/") {
+		relPath := strings.TrimPrefix(source, g.goModulePath)
+		dirPath := filepath.Join(g.goModuleRoot, relPath)
+		if info, err := os.Stat(dirPath); err == nil && info.IsDir() {
+			return dirPath
+		}
+	}
+
+	// Skip bare specifiers (node_modules, stdlib, external packages)
 	if !strings.HasPrefix(source, ".") && !strings.HasPrefix(source, "/") {
 		return ""
 	}

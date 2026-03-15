@@ -99,6 +99,40 @@ func collectIdentifiers(node *sitter.Node, source []byte, importedNames map[stri
 		return
 	}
 
+	// Go selector_expression: pkg.Symbol, pkg.Function()
+	if nodeType == "selector_expression" {
+		operand := node.ChildByFieldName("operand")
+		field := node.ChildByFieldName("field")
+		if operand != nil {
+			collectIdentifiers(operand, source, importedNames, refs)
+			if field != nil && (operand.Type() == "identifier" || operand.Type() == "type_identifier") {
+				operandName := operand.Content(source)
+				if importedNames[operandName] {
+					fieldName := field.Content(source)
+					refs[operandName+"."+fieldName] = true
+				}
+			}
+		}
+		return
+	}
+
+	// Go qualified_type: pkg.Type in type positions
+	if nodeType == "qualified_type" {
+		pkg := node.ChildByFieldName("package")
+		name := node.ChildByFieldName("name")
+		if pkg != nil {
+			collectIdentifiers(pkg, source, importedNames, refs)
+			if name != nil {
+				pkgName := pkg.Content(source)
+				if importedNames[pkgName] {
+					typeName := name.Content(source)
+					refs[pkgName+"."+typeName] = true
+				}
+			}
+		}
+		return
+	}
+
 	// For member expressions like `foo.bar()`, check the object AND record
 	// the combined "Object.property" so we can match class method symbols.
 	if nodeType == "member_expression" || nodeType == "member_access_expression" {
