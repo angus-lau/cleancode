@@ -1,6 +1,6 @@
 # cleancode
 
-AI-powered code review CLI with deep codebase understanding. Uses tree-sitter for structural analysis, SQLite for persistent indexing, and Claude for intelligent review.
+Code review CLI with deep codebase understanding. Uses tree-sitter for structural analysis, SQLite for persistent indexing, and Claude for intelligent review.
 
 ## Features
 
